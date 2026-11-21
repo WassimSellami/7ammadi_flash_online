@@ -263,24 +263,6 @@ export class SceneRenderer {
       this.predictedAngle = snapshots[this.ownSlot]!.ang;
     }
 
-    if (snapshot.paint) {
-      for (let slot = 0; slot < this.activeSlots; slot += 1) {
-        const source = snapshots[slot]!;
-        this.paint.stampTrail(
-          PLAYER_NAMES[slot]!,
-          source.x,
-          source.y,
-          source.r,
-          paletteColor(source.c),
-        );
-      }
-    } else {
-      for (let slot = 0; slot < this.activeSlots; slot += 1) {
-        const source = snapshots[slot]!;
-        this.paint.snap(PLAYER_NAMES[slot]!, source.x, source.y, source.r, paletteColor(source.c));
-      }
-    }
-
     if (snapshot.phase === "countdown") {
       this.showCountdown(snapshot.cd ?? 0);
     } else {
@@ -405,6 +387,7 @@ export class SceneRenderer {
         if (Math.hypot(driftX, driftY) > 80) {
           display.x = display.targetX;
           display.y = display.targetY;
+          this.paint.resetPlayer(PLAYER_NAMES[slot]!);
         } else {
           const correction = Math.min(1, dt * 10);
           display.x += driftX * correction;
@@ -415,6 +398,7 @@ export class SceneRenderer {
         if (distance > 260) {
           display.x = display.targetX;
           display.y = display.targetY;
+          this.paint.resetPlayer(PLAYER_NAMES[slot]!);
         } else {
           const blend = Math.min(1, dt * 14);
           display.x += (display.targetX - display.x) * blend;
@@ -430,6 +414,24 @@ export class SceneRenderer {
       const squashing = (source.fl & FLAG_SQUASH) !== 0;
       if (squashing) display.squashElapsed += dt;
       else display.squashElapsed = 0;
+    }
+
+    // Stamp the cosmetic paint layer every rendered frame from the displayed
+    // (predicted/interpolated) positions, not from 20 Hz snapshots. This keeps
+    // the stroke growing at 60 fps exactly like the local pygame build.
+    const paintActive =
+      snapshot.paint &&
+      (snapshot.phase === "countdown" || snapshot.phase === "playing");
+    for (let slot = 0; slot < this.activeSlots; slot += 1) {
+      const source = sources[slot]!;
+      const display = this.displays[slot]!;
+      const name = PLAYER_NAMES[slot]!;
+      const color = paletteColor(source.c);
+      if (paintActive && (source.fl & FLAG_KNOCKBACK) === 0) {
+        this.paint.stampTrail(name, display.x, display.y, source.r, color);
+      } else {
+        this.paint.snap(name, display.x, display.y, source.r, color);
+      }
     }
 
     // Own-player angle prediction (position stays authoritative).

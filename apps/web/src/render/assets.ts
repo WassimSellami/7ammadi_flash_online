@@ -51,35 +51,78 @@ interface Rect {
   height: number;
 }
 
-/** `_main_sprite_rect`: bounding box of non-transparent brush pixels. */
+/**
+ * `_main_sprite_rect`: pygame builds a mask (alpha > 127), takes one bounding
+ * rect per connected component and keeps the rect with the largest area. The
+ * source PNG has a small disconnected sparkle in the bottom-right corner; using
+ * the bbox of *all* pixels (the old behaviour) shrank the brush to fit that
+ * sparkle and made it visibly smaller than the pygame build.
+ */
 function alphaBounds(image: HTMLImageElement): Rect {
-  const canvas = makeCanvas(image.width, image.height);
+  const width = image.width;
+  const height = image.height;
+  const canvas = makeCanvas(width, height);
   const ctx = context(canvas);
   ctx.drawImage(image, 0, 0);
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-  let minX = canvas.width;
-  let minY = canvas.height;
-  let maxX = 0;
-  let maxY = 0;
-  for (let y = 0; y < canvas.height; y += 1) {
-    for (let x = 0; x < canvas.width; x += 1) {
-      if (data[(y * canvas.width + x) * 4 + 3]! > 8) {
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
+  const data = ctx.getImageData(0, 0, width, height).data;
+
+  const total = width * height;
+  const mask = new Uint8Array(total);
+  for (let index = 0; index < total; index += 1) {
+    // `pygame.mask.from_surface` defaults to alpha > 127.
+    if (data[index * 4 + 3]! > 127) mask[index] = 1;
+  }
+
+  const visited = new Uint8Array(total);
+  const stack = new Int32Array(total);
+  let best: Rect | null = null;
+  let bestArea = 0;
+
+  for (let start = 0; start < total; start += 1) {
+    if (mask[start] === 0 || visited[start] === 1) continue;
+    let top = 0;
+    stack[top++] = start;
+    visited[start] = 1;
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    while (top > 0) {
+      const index = stack[--top]!;
+      const x = index % width;
+      const y = (index - x) / width;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          const neighbor = ny * width + nx;
+          if (mask[neighbor] === 1 && visited[neighbor] === 0) {
+            visited[neighbor] = 1;
+            stack[top++] = neighbor;
+          }
+        }
       }
     }
+
+    const rectWidth = maxX - minX + 1;
+    const rectHeight = maxY - minY + 1;
+    const area = rectWidth * rectHeight;
+    if (area > bestArea) {
+      bestArea = area;
+      best = { x: minX, y: minY, width: rectWidth, height: rectHeight };
+    }
   }
-  if (maxX < minX || maxY < minY) {
-    return { x: 0, y: 0, width: canvas.width, height: canvas.height };
-  }
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX + 1,
-    height: maxY - minY + 1,
-  };
+
+  return best ?? { x: 0, y: 0, width, height };
 }
 
 function isPaintGreen(r: number, g: number, b: number, a: number): boolean {

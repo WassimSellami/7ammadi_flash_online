@@ -66,10 +66,14 @@ acceptance criterion "never more than 7 spawns".
   1920x1080 window); the web renderer applies the same `FX_SCALE = 1.2` to
   effect sizes, shadows, rings, stars and the direction marker.
 - Comic Sans is replaced by bundled Comic Neue (OFL).
-- The brush is recoloured client-side with the same paint-green predicate and
-  fitted to 80x80; the swing effect uses two textures split at the cream
-  bristle line, rotating around `splitY - 5`. `follow_me` changes the paint
-  colour only, never the brush sprite palette.
+- The brush is cropped to the largest alpha-connected component (matching
+  `_main_sprite_rect`, so the stray sparkle in the source PNG is ignored),
+  recoloured with the same paint-green predicate and fitted to 80x80; the swing
+  effect uses two textures split at the cream bristle line, rotating around
+  `splitY - 5`. `follow_me` changes the paint colour only, never the brush
+  sprite palette. The brush sprite, shadow, ring and marker are drawn at
+  `BRUSH_VISUAL_SCALE = 1.3` (requested, larger than the reference); movement,
+  collision and paint radii stay identical to the reference.
 - Scoreboard/menu visuals are DOM overlays, but the result cards count both
   percentages up and reveal the winner like `Screen.draw_scoreboard`. The
   in-game HUD matches the reference: timeline, prize markers and audio toggles,
@@ -77,5 +81,7 @@ acceptance criterion "never more than 7 spawns".
 - Netcode: the local brush predicts turn **and** position from the predicted
   angle (jump factor 0.8, playfield clamp) and reconciles to the authoritative
   position when the drift exceeds 40–80 px; the opponent is interpolated and
-  both snap on teleports/knockback. The paint layer always uses server
-  positions, so client paint is an approximation (server score is final).
+  both snap on teleports/knockback. The paint layer stamps every rendered frame
+  from the displayed (predicted/interpolated) positions so strokes grow
+  smoothly at 60 fps instead of jumpy 20 Hz chunks; client paint is still
+  cosmetic and the server mask decides the score.

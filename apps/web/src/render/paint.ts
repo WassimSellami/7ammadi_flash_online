@@ -107,20 +107,26 @@ export class PaintLayer {
   }
 
   /**
-   * Stamps from the previous snapshot position to the new one so the paint
-   * layer looks continuous at 20 Hz even though the server stamps at 60 Hz.
+   * Stamps from the previously painted position to the current brush position.
+   * Called every rendered frame (not every snapshot), so the stroke grows
+   * continuously at 60 fps and follows turns without visible circle chunks.
+   * A step of half the brush radius still overlaps heavily, so the stroke stays
+   * solid while keeping the number of RenderTexture passes low.
    */
   stampTrail(name: string, x: number, y: number, radius: number, color: number): void {
     const previous = this.last.get(name);
-    if (!previous || Math.hypot(x - previous.x, y - previous.y) > 420) {
+    const distance = previous ? Math.hypot(x - previous.x, y - previous.y) : Infinity;
+    if (!previous || distance > 420) {
       this.stamp(x, y, radius, color);
       this.last.set(name, { x, y, radius, color });
       return;
     }
+    // Idle brushes repaint the same pixels every frame in the reference; skip
+    // the GPU pass unless the brush actually moved or changed shape/colour.
+    if (distance < 0.01 && previous.radius === radius && previous.color === color) return;
     const dx = x - previous.x;
     const dy = y - previous.y;
-    const distance = Math.hypot(dx, dy);
-    const step = 4;
+    const step = Math.max(4, radius * 0.5);
     const count = Math.max(1, Math.ceil(distance / step));
     for (let i = 1; i <= count; i += 1) {
       const t = i / count;

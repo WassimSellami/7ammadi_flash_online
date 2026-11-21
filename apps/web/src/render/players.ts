@@ -13,6 +13,9 @@ import type { BrushLayers } from "./assets";
 
 const ICON_SIZE = 80;
 const JUMP_VISUAL_HEIGHT = 110;
+/** Drawn larger than the reference on purpose (requested). Physics/paint stay at 36. */
+const BRUSH_VISUAL_SCALE = 1.3;
+const VISUAL_SIZE = ICON_SIZE * BRUSH_VISUAL_SCALE;
 
 export interface PlayerViewState {
   x: number;
@@ -100,7 +103,7 @@ export class PlayerView {
     this.brush.position.set(state.x, baseY);
     const squashX = state.squash > 0.001 ? 1 + 0.24 * state.squash : 1;
     const squashY = state.squash > 0.001 ? 1 - 0.2 * state.squash : 1;
-    this.brush.scale.set(squashX, squashY);
+    this.brush.scale.set(squashX * BRUSH_VISUAL_SCALE, squashY * BRUSH_VISUAL_SCALE);
 
     const upperAngle = (state.swing * 0.5 * Math.PI) / 180;
     const lowerAngle = (state.swing * Math.PI) / 180;
@@ -119,10 +122,10 @@ export class PlayerView {
     const lift = state.jumping ? Math.min(1, Math.max(0, state.lift / JUMP_VISUAL_HEIGHT)) : 0;
     const widthFactor = state.jumping ? 0.85 - 0.34 * lift : 0.85;
     const alpha = state.jumping ? Math.round(135 - 60 * lift) : 135;
-    const width = Math.max(12, Math.round(ICON_SIZE * widthFactor));
+    const width = Math.max(12, Math.round(VISUAL_SIZE * widthFactor));
     const height = Math.max(6, Math.round(width * 0.6));
     const centerX = Math.round(state.x);
-    const centerY = Math.round(state.y + ICON_SIZE * 0.47);
+    const centerY = Math.round(state.y + VISUAL_SIZE * 0.47);
     const outerWidth = width + 12;
     const outerHeight = height + 6;
 
@@ -144,7 +147,7 @@ export class PlayerView {
     const expiring = remaining > 0 && remaining <= 2.5;
     const urgency = expiring ? 1 - remaining / 2.5 : 0;
     const boost = pulse * (4 + 7 * urgency);
-    const extent = Math.max(state.radius, ICON_SIZE / 2);
+    const extent = Math.max(state.radius, VISUAL_SIZE / 2);
     const radius = Math.round(extent + (5 + boost) * FX_SCALE);
     let ringAlpha = Math.round(130 + pulse * 90);
     if (expiring) ringAlpha = Math.min(255, ringAlpha + Math.round(45 * urgency));
@@ -166,7 +169,7 @@ export class PlayerView {
     if (!state.broken) return;
     const centerX = state.x;
     const centerY = state.y - state.lift;
-    const orbit = ICON_SIZE / 2 + 10 * FX_SCALE;
+    const orbit = VISUAL_SIZE / 2 + 10 * FX_SCALE;
     for (let index = 0; index < 5; index += 1) {
       const angle = this.elapsed * 2.6 + (index * Math.PI * 2) / 5;
       const wobble = Math.sin(this.elapsed * 5 + index * 1.7) * 3 * FX_SCALE;
@@ -201,7 +204,7 @@ export class PlayerView {
     const uy = Math.sin(direction);
     const px = -uy;
     const py = ux;
-    const extent = Math.max(state.radius, ICON_SIZE / 2);
+    const extent = Math.max(state.radius, VISUAL_SIZE / 2);
     const originX = state.x + ux * (extent + 0.5 * FX_SCALE);
     const originY = baseY + uy * (extent + 0.5 * FX_SCALE);
     const length = 16 * FX_SCALE;
