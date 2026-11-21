@@ -1,0 +1,37 @@
+{
+  "name": "7ammadi-flash-online",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test",
+    "dev:web": "npm --workspace @flash/web run dev",
+    "dev:server": "npm --workspace @flash/server run dev",
+    "build": "npm --workspace @flash/web run build",
+    "preview": "npm --workspace @flash/web run preview",
+    "deploy": "npm --workspace @flash/web run build && npm --workspace @flash/server run deploy",
+    "e2e": "vitest run apps/server/test",
+    "measure": "npm --workspace @flash/server run measure",
+    "load": "tsx apps/server/scripts/load.ts",
+    "smoke": "node scripts/smoke.mjs http://localhost:4173",
+    "smoke:online": "node scripts/smoke-online.mjs http://localhost:5173",
+    "smoke:offline": "node scripts/smoke-offline.mjs http://localhost:4173",
+    "smoke:cf": "node scripts/smoke-cf.mjs http://127.0.0.1:8787"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "playwright": "^1.65.1",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

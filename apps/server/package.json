@@ -1,0 +1,24 @@
+{
+  "name": "@flash/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/node.ts",
+    "dev:once": "tsx src/node.ts",
+    "dev:cf": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "measure": "tsx scripts/measure.ts"
+  },
+  "dependencies": {
+    "@flash/core": "*",
+    "@flash/protocol": "*",
+    "@flash/server-engine": "*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "wrangler": "^4.16.0"
+  }
+}
