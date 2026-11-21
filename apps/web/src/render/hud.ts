@@ -1,25 +1,22 @@
 /**
- * In-game HUD: round timeline, prize markers, live score chips, timer and the
- * audio toggles. All coordinates are in the logical 1920x1080 space.
+ * In-game HUD, ported from `Screen.draw_round_timeline`: a single panel with
+ * the round timeline, prize markers and the two audio toggles. Like the
+ * reference, it only shows while the round is actually being played.
  */
 
-import { Container, Graphics, Sprite, Text, TextStyle, type Texture } from "pixi.js";
-import { FONT_FAMILY, paletteColor } from "../config";
+import { Container, Graphics, Sprite, type Texture } from "pixi.js";
 
 const HUD_HEIGHT = 74;
-const TRACK_X = 430;
-const TRACK_Y = 32;
+const PANEL_CENTER_Y = HUD_HEIGHT / 2;
+const TRACK_X = 28;
 const TRACK_HEIGHT = 10;
-const TRACK_WIDTH = 1120;
+const ICON_SIZE = 46;
 const ROUND_TIME = 84;
 const PRIZE_TIME = 12;
 
 export interface HudState {
   remainingTicks: number;
   totalTicks: number;
-  names: [string, string];
-  scores: [number, number];
-  palettes: [number, number];
   musicOn: boolean;
   sfxOn: boolean;
   phase: "countdown" | "playing" | "result";
@@ -33,13 +30,11 @@ export class Hud {
   private readonly markers = new Graphics();
   private readonly music = new Sprite();
   private readonly sound = new Sprite();
-  private readonly scoreTexts: [Text, Text];
-  private readonly timerText: Text;
   private readonly musicOn: Texture;
   private readonly musicOff: Texture;
   private readonly soundOn: Texture;
   private readonly soundOff: Texture;
-  private lastUpdate = 0;
+  private elapsed = 0;
 
   constructor(options: {
     musicOn: Texture;
@@ -56,41 +51,16 @@ export class Hud {
 
     this.container.addChild(this.panel, this.track, this.fill, this.markers);
 
-    const style = (color: number): TextStyle =>
-      new TextStyle({
-        fontFamily: FONT_FAMILY,
-        fontSize: 24,
-        fontWeight: "700",
-        fill: color,
-        dropShadow: { color: 0x05080f, alpha: 0.6, blur: 3, distance: 1, angle: Math.PI / 2 },
-      });
-
-    this.scoreTexts = [new Text({ text: "", style: style(0xffffff) }), new Text({ text: "", style: style(0xffffff) })];
-    this.scoreTexts[0].position.set(26, 23);
-    this.scoreTexts[1].position.set(196, 23);
-    this.container.addChild(...this.scoreTexts);
-
-    this.timerText = new Text({
-      text: "1:24",
-      style: new TextStyle({
-        fontFamily: FONT_FAMILY,
-        fontSize: 26,
-        fontWeight: "700",
-        fill: 0xf1f5fc,
-      }),
-    });
-    this.timerText.anchor.set(0.5);
-    this.timerText.position.set(1640, 37);
-    this.container.addChild(this.timerText);
-
+    const musicX = 1920 - 22 - ICON_SIZE;
+    const soundX = musicX - 10 - ICON_SIZE;
     for (const [sprite, x] of [
-      [this.music, 1852],
-      [this.sound, 1798],
+      [this.music, musicX],
+      [this.sound, soundX],
     ] as Array<[Sprite, number]>) {
       sprite.anchor.set(0.5);
-      sprite.position.set(x, 37);
-      sprite.width = 46;
-      sprite.height = 46;
+      sprite.position.set(x, PANEL_CENTER_Y);
+      sprite.width = ICON_SIZE;
+      sprite.height = ICON_SIZE;
       sprite.eventMode = "static";
       sprite.cursor = "pointer";
       this.container.addChild(sprite);
@@ -98,20 +68,30 @@ export class Hud {
     this.music.on("pointerdown", options.onMusic);
     this.sound.on("pointerdown", options.onSound);
     this.container.eventMode = "static";
+    this.container.visible = false;
   }
 
   update(state: HudState, dt: number): void {
-    this.lastUpdate += dt;
-    const total = Math.max(1, state.totalTicks);
-    const elapsed = Math.max(0, total - state.remainingTicks);
-    const progress = Math.min(1, elapsed / total);
-    const remainingSeconds = state.remainingTicks / 60;
-    const warning = remainingSeconds <= 10 && state.phase === "playing"
-      ? Math.min(1, (10 - remainingSeconds) / 10)
-      : 0;
-    const pulse = 0.5 + 0.5 * Math.sin(this.lastUpdate * 6);
+    this.container.visible = state.phase === "playing";
+    if (!this.container.visible) return;
 
-    const blend = (base: [number, number, number], warm: [number, number, number], amount: number): number => {
+    this.elapsed += dt;
+    const total = Math.max(1, state.totalTicks);
+    const elapsedTicks = Math.max(0, total - state.remainingTicks);
+    const progress = Math.min(1, elapsedTicks / total);
+    const remainingSeconds = state.remainingTicks / 60;
+
+    let warning = 0;
+    if (elapsedTicks > 0 && remainingSeconds <= 10) {
+      warning = Math.min(1, (10 - remainingSeconds) / 10);
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(this.elapsed * 6);
+
+    const blend = (
+      base: [number, number, number],
+      warm: [number, number, number],
+      amount: number,
+    ): number => {
       const t = Math.max(0, Math.min(1, amount));
       return (
         (Math.round(base[0] + (warm[0] - base[0]) * t) << 16) |
@@ -127,44 +107,35 @@ export class Hud {
     this.panel.clear();
     this.panel.rect(0, 0, 1920, HUD_HEIGHT).fill(panelColor);
 
+    const trackWidth = Math.max(40, 1796 - 50);
     this.track.clear();
-    this.track.roundRect(TRACK_X, TRACK_Y, TRACK_WIDTH, TRACK_HEIGHT, 5).fill(trackColor);
+    this.track
+      .roundRect(TRACK_X, PANEL_CENTER_Y - TRACK_HEIGHT / 2, trackWidth, TRACK_HEIGHT, 5)
+      .fill(trackColor);
 
     this.fill.clear();
-    const fillWidth = Math.round(TRACK_WIDTH * progress);
+    const fillWidth = Math.round(trackWidth * progress);
     if (fillWidth > 0) {
-      this.fill.roundRect(TRACK_X, TRACK_Y, fillWidth, TRACK_HEIGHT, 5).fill(fillColor);
+      this.fill
+        .roundRect(TRACK_X, PANEL_CENTER_Y - TRACK_HEIGHT / 2, fillWidth, TRACK_HEIGHT, 5)
+        .fill(fillColor);
     }
 
     this.markers.clear();
+    const reachedColor = blend([255, 205, 94], [255, 150, 90], warning * 0.6);
     for (let spawn = PRIZE_TIME; spawn < ROUND_TIME; spawn += PRIZE_TIME) {
-      const x = TRACK_X + Math.round((TRACK_WIDTH * spawn) / ROUND_TIME);
-      const reached = elapsed >= spawn * 60;
-      const midY = TRACK_Y + TRACK_HEIGHT / 2;
-      this.markers.moveTo(x, midY - 10);
-      this.markers.lineTo(x + 10, midY);
-      this.markers.lineTo(x, midY + 10);
-      this.markers.lineTo(x - 10, midY);
+      const x = TRACK_X + Math.round((trackWidth * spawn) / ROUND_TIME);
+      const reached = elapsedTicks >= spawn * 60;
+      this.markers.moveTo(x, PANEL_CENTER_Y - 10);
+      this.markers.lineTo(x + 10, PANEL_CENTER_Y);
+      this.markers.lineTo(x, PANEL_CENTER_Y + 10);
+      this.markers.lineTo(x - 10, PANEL_CENTER_Y);
       this.markers.closePath();
-      this.markers.fill(reached ? 0xffcd5e : 0x1c273a);
-      this.markers.stroke({ width: 2, color: 0xffcd5e });
+      this.markers.fill(reached ? reachedColor : 0x1c273a);
+      this.markers.stroke({ width: 2, color: reachedColor });
     }
-
-    this.scoreTexts[0].text = `${truncate(state.names[0])} ${state.scores[0]}%`;
-    this.scoreTexts[0].style.fill = paletteColor(state.palettes[0]);
-    this.scoreTexts[1].text = `${truncate(state.names[1])} ${state.scores[1]}%`;
-    this.scoreTexts[1].style.fill = paletteColor(state.palettes[1]);
-
-    const seconds = Math.ceil(state.remainingTicks / 60);
-    this.timerText.text = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-    this.timerText.style.fill = warning > 0.35 ? 0xff8a6e : 0xf1f5fc;
 
     this.music.texture = state.musicOn ? this.musicOn : this.musicOff;
     this.sound.texture = state.sfxOn ? this.soundOn : this.soundOff;
   }
-}
-
-function truncate(name: string): string {
-  const cleaned = name.replace(/_/g, " ");
-  return cleaned.length > 10 ? `${cleaned.slice(0, 9)}…` : cleaned;
 }

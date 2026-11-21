@@ -31,32 +31,22 @@ try {
   await page.waitForSelector(".brand h1", { timeout: 20_000 });
   console.log("menu ok");
 
-  await page.getByRole("button", { name: /Solo score attack/ }).click();
-  await page.waitForSelector("#game-chip", { timeout: 10_000 });
+  await page.getByRole("button", { name: /Local hotseat/ }).click();
   await page.waitForTimeout(2500);
-  await page.screenshot({ path: "smoke-solo.png" });
+  await page.screenshot({ path: "smoke-hotseat.png" });
   if (!(await page.locator("canvas").count())) throw new Error("no canvas");
-  console.log("solo ok");
+  console.log("hotseat ok");
 
   await page.keyboard.press("Escape");
   await page.waitForSelector("text=Paused", { timeout: 5000 });
   await page.getByRole("button", { name: "Resume" }).click();
-  await page.waitForSelector("#game-chip", { timeout: 5000 });
   console.log("pause/resume ok");
 
-  await page.getByRole("button", { name: "Pause" }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("text=Paused", { timeout: 5000 });
   await page.getByRole("button", { name: "Main menu" }).click();
   await page.waitForSelector(".brand h1", { timeout: 5000 });
-
-  await page.getByRole("button", { name: /Local hotseat/ }).click();
-  await page.waitForSelector("#game-chip", { timeout: 10_000 });
-  await page.waitForTimeout(1500);
-  await page.keyboard.down("KeyD");
-  await page.keyboard.down("ArrowLeft");
-  await page.waitForTimeout(700);
-  await page.keyboard.up("KeyD");
-  await page.keyboard.up("ArrowLeft");
-  console.log("hotseat ok");
+  console.log("back to menu ok");
 
   await page.goto(`${base}/?room=ABCD`, { waitUntil: "networkidle" });
   await page.waitForSelector("text=Play online", { timeout: 10_000 });

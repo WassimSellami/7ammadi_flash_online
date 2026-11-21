@@ -6,7 +6,7 @@ web rewrite of the pygame project in the sibling folder `7ammadi_flash_ai`
 
 - **Online 1v1** via room code / invite link, hosted on Cloudflare Workers +
   one Durable Object per room.
-- **Local hotseat** and **solo score attack**, offline, installable as a PWA.
+- **Local hotseat**, offline, installable as a PWA.
 - **One rule engine**: the deterministic TypeScript core in `packages/core`
   runs on the server (Cloudflare or Node) and in the browser Web Worker.
 
@@ -49,9 +49,9 @@ docs                    deployment, protocol, hosting costs, fidelity notes
 | `npm test` | Vitest: determinism, rules, protocol, mask parity, RoomEngine, WebSocket E2E (62 tests) |
 | `npm run build` | Vite build + generated `sw.js` precache |
 | `npm run dev:server` / `dev:web` | local room server / Vite dev server |
-| `npm run smoke` | Playwright menu → solo → pause → hotseat → invite-form smoke |
+| `npm run smoke` | Playwright menu → hotseat → pause → invite-form smoke |
 | `npm run smoke:online` | two browsers complete an online round (short dev round) |
-| `npm run smoke:offline` | installs the PWA, goes offline, reloads, plays solo |
+| `npm run smoke:offline` | installs the PWA, goes offline, reloads, plays hotseat |
 | `npm run smoke:cf` | Cloudflare adapter against `wrangler dev` |
 | `npm run measure` | message budget for one 84 s match |
 

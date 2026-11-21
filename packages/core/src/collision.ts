@@ -66,7 +66,8 @@ export function bandiReward(
   events.push({
     tick,
     type: "punch",
-    slot: victim.slot,
+    // The reference draws the punch effect in the attacker's colour.
+    slot: attacker.slot,
     x: (attacker.x + victim.x) / 2,
     y: (attacker.y + victim.y) / 2,
   });

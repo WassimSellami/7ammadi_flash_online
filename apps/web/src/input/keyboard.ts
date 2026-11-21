@@ -9,7 +9,7 @@ const RIGHT_CODES = new Set(["KeyD", "ArrowRight"]);
 /**
  * Keyboard tracker.
  *
- * - Online/solo: A/D **and** arrows steer the local player.
+ * - Online: A/D **and** arrows steer your own brush.
  * - Hotseat: A/D steer player A, arrows steer player B (reference layout).
  */
 export class KeyboardInput {

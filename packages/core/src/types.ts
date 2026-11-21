@@ -113,6 +113,7 @@ export type GameEvent = {
   tick: number;
 } & (
   | { type: "smash"; x: number; y: number }
+  /** `slot` is the attacker, so the effect uses the attacker's colour. */
   | { type: "punch"; slot: number; x: number; y: number }
   | {
       type: "pickup";

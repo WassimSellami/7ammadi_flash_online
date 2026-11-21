@@ -34,7 +34,7 @@ export class AudioManager {
 
   constructor() {
     this.sfxEnabled = readFlag(STORAGE.sfx, true);
-    this.musicEnabled = readFlag(STORAGE.music, false);
+    this.musicEnabled = readFlag(STORAGE.music, true);
     for (const [name, spec] of Object.entries(SFX)) {
       const pool: HTMLAudioElement[] = [];
       for (let i = 0; i < POOL_SIZE; i += 1) {

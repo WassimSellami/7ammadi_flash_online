@@ -18,7 +18,7 @@ import { button, clear, el, swatches, toast } from "./ui/dom";
 import { canInstall, promptInstall, registerServiceWorker, setupInstallPrompt } from "./pwa";
 
 type Screen = "boot" | "menu" | "online" | "lobby" | "game" | "result" | "paused" | "help";
-type Mode = "online" | "hotseat" | "solo";
+type Mode = "online" | "hotseat";
 
 const DEFAULT_NAME = "Player";
 const ROOM_RE = /^[A-Z0-9]{4,8}$/;
@@ -47,7 +47,6 @@ export class FlashApp {
   private paused = false;
   private inputBlocked = true;
   private lastErrorAt = 0;
-  private soloBest = 0;
   private installing = false;
 
   async start(): Promise<void> {
@@ -90,7 +89,7 @@ export class FlashApp {
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "hidden") return;
       if (this.mode === "online") this.online?.sendNeutral();
-      if ((this.mode === "hotseat" || this.mode === "solo") && this.screen === "game") {
+      if (this.mode === "hotseat" && this.screen === "game") {
         this.setPaused(true);
       }
     });
@@ -114,8 +113,6 @@ export class FlashApp {
       if (Number.isInteger(storedPalette) && storedPalette >= 0 && storedPalette <= 3) {
         this.palette = storedPalette;
       }
-      const best = Number(localStorage.getItem("flash.solo.best"));
-      if (Number.isFinite(best)) this.soloBest = Math.max(0, Math.min(100, best));
     } catch {
       // Private-mode storage failures are non-fatal.
     }
@@ -172,10 +169,6 @@ export class FlashApp {
         className: "wide",
         hint: "Two players, one keyboard. A/D and arrow keys.",
       }),
-      button("Solo score attack", () => this.startLocal("solo"), {
-        className: "wide",
-        hint: "Paint as much as you can. No bot, just your best run.",
-      }),
       button("How to play", () => this.showHelp(), {
         className: "wide",
         hint: "Controls, prizes and scoring in 30 seconds.",
@@ -212,12 +205,6 @@ export class FlashApp {
 
     footer.append(audioRow, installSlot);
     screen.append(brand, subtitle, list, footer);
-
-    if (this.soloBest > 0) {
-      const best = el("p", "tiny", `Solo best: ${this.soloBest}%`);
-      best.style.marginTop = "14px";
-      screen.append(best);
-    }
     this.ui.append(screen);
   }
 
@@ -571,28 +558,15 @@ export class FlashApp {
   private showGameChrome(): void {
     this.setScreen("game");
     clear(this.ui);
-    const chip = el("div", "hud-chip");
-    chip.id = "game-chip";
     if (this.mode === "online") {
-      chip.append(
-        el("span", "pill", this.room ? `room ${this.room}` : "online"),
-      );
+      const chip = el("div", "hud-chip");
+      chip.id = "game-chip";
+      chip.append(el("span", "pill", this.room ? `room ${this.room}` : "online"));
       const latency = el("span", "pill", "—");
       latency.id = "latency-pill";
       chip.append(latency);
-    } else if (this.mode === "solo") {
-      chip.append(el("span", "pill", `best ${this.soloBest}%`));
+      this.ui.append(chip);
     }
-    const action = el("button", "ghost");
-    action.type = "button";
-    action.textContent = this.mode === "online" ? "Leave" : "Pause";
-    action.style.pointerEvents = "auto";
-    action.addEventListener("click", () => {
-      if (this.mode === "online") this.confirmLeave();
-      else this.setPaused(true);
-    });
-    chip.append(action);
-    this.ui.append(chip);
     this.updateChip();
   }
 
@@ -640,57 +614,36 @@ export class FlashApp {
     const scores = this.result?.scores ?? this.latestSnapshot?.scores ?? [0, 0];
     const winner = this.result?.winner ?? this.latestSnapshot?.win ?? null;
     const reason = this.result?.reason;
-    const names: [string, string] = order
-      ? order.names
-      : this.mode === "solo"
-        ? ["You", "Target"]
-        : ["Player A", "Player B"];
-    const palettes: [number, number] = order
-      ? order.palettes
-      : this.mode === "solo"
-        ? [this.palette, 0]
-        : [2, 0];
+    const names: [string, string] = order ? order.names : ["Player A", "Player B"];
+    const palettes: [number, number] = order ? order.palettes : [2, 0];
 
     const veil = el("div", "pause-veil");
-    const card = el("div", "overlay-card");
-    card.append(el("h2", undefined, reason === "forfeit" ? "Forfeit" : "Results"));
+    const card = el("div", "overlay-card results");
+    card.append(el("h2", undefined, "Results"));
 
     const headline = el("p", "win");
     if (reason === "abandoned") {
       headline.textContent = "Both players left — no winner.";
-    } else if (this.mode === "solo") {
-      const mine = scores[0] ?? 0;
-      if (mine > this.soloBest) {
-        this.soloBest = mine;
-        try {
-          localStorage.setItem("flash.solo.best", String(mine));
-        } catch {
-          // Ignore.
-        }
-        headline.textContent = `New best: ${mine}%!`;
-      } else {
-        headline.textContent = `${mine}% — best ${this.soloBest}%`;
-      }
     } else if (winner === null) {
-      headline.textContent = "Draw — the arena stays split.";
+      headline.textContent = "Draw";
     } else {
       const winnerName = names[winner === 0 ? 0 : 1]!;
-      headline.textContent =
-        this.mode === "online"
-          ? winner === this.ownSlot
-            ? "You win!"
-            : `${winnerName} wins.`
-          : `${winnerName} wins!`;
+      headline.textContent = `${winnerName} wins`;
+      headline.style.color = paletteCss(palettes[winner === 0 ? 0 : 1]!);
     }
+    headline.style.opacity = "0";
+    headline.style.transition = "opacity 250ms ease";
     card.append(headline);
 
     const row = el("div", "score-row");
+    const values: HTMLElement[] = [];
     for (const index of [0, 1] as const) {
       const score = el("div", "score-card");
       score.append(el("div", "label", names[index]!));
-      const value = el("div", "value", `${scores[index] ?? 0}%`);
+      const value = el("div", "value", "0%");
       value.style.color = paletteCss(palettes[index]!);
       score.append(value);
+      values.push(value);
       row.append(score);
     }
     card.append(row);
@@ -718,6 +671,36 @@ export class FlashApp {
     }
     veil.append(card);
     this.ui.append(veil);
+    this.animateResult(scores, values, headline);
+  }
+
+  /** `Screen.draw_scoreboard`: count both percentages up, then reveal the winner. */
+  private animateResult(
+    scores: readonly [number, number],
+    values: readonly HTMLElement[],
+    headline: HTMLElement,
+  ): void {
+    const countSpan = 1100;
+    const revealAt = countSpan + 450;
+    const start = performance.now();
+    const step = (): void => {
+      if (this.screen !== "result") return;
+      const elapsed = performance.now() - start;
+      const progress = Math.min(1, elapsed / countSpan);
+      const eased = 1 - (1 - progress) ** 3;
+      for (const index of [0, 1] as const) {
+        values[index]!.textContent = `${Math.round((scores[index] ?? 0) * eased)}%`;
+      }
+      if (elapsed < revealAt) {
+        requestAnimationFrame(step);
+      } else {
+        for (const index of [0, 1] as const) {
+          values[index]!.textContent = `${scores[index] ?? 0}%`;
+        }
+        headline.style.opacity = "1";
+      }
+    };
+    requestAnimationFrame(step);
   }
 
   private showOnlineError(code: string, message?: string): void {
@@ -764,21 +747,17 @@ export class FlashApp {
 
   // -------------------------------------------------------------- offline
 
-  private startLocal(mode: "hotseat" | "solo"): void {
+  private startLocal(mode: "hotseat"): void {
     this.closeOffline();
     this.mode = mode;
     this.result = null;
     this.latestSnapshot = null;
     this.paused = false;
-    const palettes: [number, number] = mode === "solo" ? [this.palette, 0] : [2, 0];
+    const palettes: [number, number] = [2, 0];
     this.ownPalette = palettes[0];
     this.renderer.resetRound();
-    this.renderer.setActiveSlots(mode === "solo" ? 1 : 2);
-    this.renderer.setPlayers(
-      mode === "solo" ? ["You", "Target"] : ["Player A", "Player B"],
-      palettes,
-      mode === "solo" ? 0 : null,
-    );
+    this.renderer.setActiveSlots(2);
+    this.renderer.setPlayers(["Player A", "Player B"], palettes, null);
     this.offline = new OfflineClient({ mode, palettes });
     this.offline.onSnapshot = (snapshot) => {
       this.latestSnapshot = snapshot;
@@ -830,9 +809,8 @@ export class FlashApp {
     row.append(
       button("Resume", () => this.setPaused(false), { className: "primary" }),
       button("Restart", () => {
-        const next = this.mode === "solo" ? "solo" : "hotseat";
         this.closeOffline();
-        this.startLocal(next);
+        this.startLocal("hotseat");
       }, { className: "ghost" }),
       button("Main menu", () => {
         this.closeOffline();
@@ -863,12 +841,6 @@ export class FlashApp {
     if (this.mode === "hotseat" && this.offline) {
       const { a, b } = this.input.hotseat();
       this.offline.setInputs(a, b);
-      return;
-    }
-    if (this.mode === "solo" && this.offline) {
-      const intent = this.input.own();
-      this.renderer.setLocalInput(intent.left, intent.right);
-      this.offline.setInputs(intent, { left: false, right: false });
     }
   }
 
@@ -880,7 +852,7 @@ export class FlashApp {
       return;
     }
     if (
-      (this.mode === "hotseat" || this.mode === "solo") &&
+      this.mode === "hotseat" &&
       (this.screen === "game" || this.screen === "paused")
     ) {
       event.preventDefault();

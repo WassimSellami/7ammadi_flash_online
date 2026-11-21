@@ -4,6 +4,13 @@ export const ASSET_BASE = "/v1";
 export const FONT_FAMILY = "Comic Neue";
 export const PALETTES = PAINT_PALETTE;
 
+/**
+ * `data/effects.py` multiplies cosmetic sizes by
+ * `min(width / 1440, height / 900)`; on the reference 1920x1080 window that is
+ * exactly 1.2. Keep that factor so the browser matches the desktop build.
+ */
+export const FX_SCALE = 1.2;
+
 export interface EnvLike {
   VITE_SERVER_URL?: string;
 }

@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 /**
- * Offline simulation worker (hotseat + solo score attack).
+ * Offline simulation worker (local hotseat).
  *
  * Runs the exact same core as the authoritative server at 60 Hz, posting
  * snapshots at 20 Hz and events immediately. Pausing stops ticks; the

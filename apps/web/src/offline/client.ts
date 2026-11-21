@@ -5,7 +5,7 @@
 import type { GameEvent, RoundEndReason, Snapshot } from "@flash/core";
 import type { Intent } from "../input/keyboard";
 
-export type OfflineMode = "hotseat" | "solo";
+export type OfflineMode = "hotseat";
 
 export interface OfflineRoundEnd {
   scores: [number, number];
@@ -62,7 +62,7 @@ export class OfflineClient {
     this.worker.postMessage({
       type: "init",
       palettes: options.palettes,
-      activeSlots: options.mode === "solo" ? 1 : 2,
+      activeSlots: 2,
       seed: `offline-${Date.now().toString(36)}`,
     });
   }

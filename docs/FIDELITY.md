@@ -39,9 +39,10 @@ Reference: `../7ammadi_flash_ai` (`data/player.py`, `data/game.py`,
 - Countdown: 1 s per label (3, 2, 1, Go!) instead of `symbol_time = 0.1`.
 - Scoring happens on a 480x252 palette-index mask; the client's paint layer is
   cosmetic. Server scores win.
-- Rain is painted into the mask over 1.5 s; boom is stamped instantly.
-- Online has no pause; local mode pauses.
-- Solo has no bot: it is a score attack (paint % and a stored best).
+- Rain is painted into the mask over 1.5 s; boom is stamped instantly. The
+  client replays those stamps locally on the same schedule so the visible paint
+  matches the score mask.
+- Online has no pause; local hotseat pauses.
 - `beaten_time` is unused in the reference (nothing sets `beaten = true`); the
   field and flag stay in the snapshot for parity.
 
@@ -61,15 +62,18 @@ acceptance criterion "never more than 7 spawns".
   join/reconnect syncs the authoritative 480x252 mask as RLE and redraws it.
 - Effects caps: 420 total, 180 trails, 120 bubbles; `_shift_hue` is ported
   exactly. Bandi has no bubbles (ring only), speed/fat spawn bubbles.
-- `EffectsManager.scale` used a 1440x900 baseline; the web renderer uses the
-  logical 1920x1080 space directly, so effect sizes are scaled from the
-  reference constants rather than window size.
+- `EffectsManager.scale` used a 1440x900 baseline (1.2 on the reference
+  1920x1080 window); the web renderer applies the same `FX_SCALE = 1.2` to
+  effect sizes, shadows, rings, stars and the direction marker.
 - Comic Sans is replaced by bundled Comic Neue (OFL).
 - The brush is recoloured client-side with the same paint-green predicate and
   fitted to 80x80; the swing effect uses two textures split at the cream
-  bristle line, rotating around `splitY - 5`.
-- Scoreboard/menu visuals were redesigned as DOM overlays; the in-game HUD is
-  Pixi and keeps the timeline, prize markers, audio toggles and live scores.
+  bristle line, rotating around `splitY - 5`. `follow_me` changes the paint
+  colour only, never the brush sprite palette.
+- Scoreboard/menu visuals are DOM overlays, but the result cards count both
+  percentages up and reveal the winner like `Screen.draw_scoreboard`. The
+  in-game HUD matches the reference: timeline, prize markers and audio toggles,
+  no live scores or numeric timer, hidden during the countdown.
 - Netcode: the local brush predicts turn **and** position from the predicted
   angle (jump factor 0.8, playfield clamp) and reconciles to the authoritative
   position when the drift exceeds 40–80 px; the opponent is interpolated and

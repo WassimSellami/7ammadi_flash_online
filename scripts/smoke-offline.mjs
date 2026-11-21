@@ -68,10 +68,11 @@ try {
   await page.waitForSelector(".brand h1", { timeout: 20_000 });
   console.log("offline reload ok");
 
-  await page.getByRole("button", { name: /Solo score attack/ }).click();
-  await page.waitForSelector("#game-chip", { timeout: 10_000 });
+  await page.getByRole("button", { name: /Local hotseat/ }).click();
   await page.waitForTimeout(1500);
-  console.log("offline solo ok");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("text=Paused", { timeout: 10_000 });
+  console.log("offline hotseat ok");
 
   if (errors.length) {
     console.error("ERRORS:\n" + errors.join("\n"));

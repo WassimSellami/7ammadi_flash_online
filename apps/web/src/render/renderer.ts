@@ -106,6 +106,13 @@ export class SceneRenderer {
   private predictedAngle = 180;
   private countdownAge = 0;
   private countdownLabel = -1;
+  private readonly pendingPaint: Array<{
+    x: number;
+    y: number;
+    radius: number;
+    color: number;
+    delay: number;
+  }> = [];
 
   constructor(app: Application, assets: GameAssets, audio: AudioManager) {
     this.app = app;
@@ -115,7 +122,7 @@ export class SceneRenderer {
     this.background.height = 1080;
 
     this.paint = new PaintLayer(app.renderer as PixiRenderer, assets.whiteCircle);
-    this.effects = new EffectsManager(assets.whiteCircle);
+    this.effects = new EffectsManager();
     this.prize = new PrizeView(assets.prizeIcons);
     this.players = [
       new PlayerView(assets.brushes, 2),
@@ -158,6 +165,7 @@ export class SceneRenderer {
       this.effects.container,
       ...this.players.map((player) => player.container),
       this.prize.container,
+      this.effects.labels,
       this.hud.container,
       this.countdown,
     );
@@ -199,6 +207,7 @@ export class SceneRenderer {
   resetRound(): void {
     this.paint.clear();
     this.effects.clear();
+    this.pendingPaint.length = 0;
     this.prize.update(null, 0, 0);
     this.hasSnapshot = false;
     this.countdown.visible = false;
@@ -292,7 +301,7 @@ export class SceneRenderer {
   handleEvent(event: GameEvent): void {
     switch (event.type) {
       case "smash":
-        this.effects.smash(event.x, event.y);
+        // The reference only plays the sound; the jump/squash is the visual.
         this.audio.play("smash");
         break;
       case "punch":
@@ -305,10 +314,22 @@ export class SceneRenderer {
         this.audio.play("plop");
         break;
       case "boom":
+        // Paint the circle immediately (the server already stamped it).
+        this.paint.stamp(event.x, event.y, event.radius, paletteColor(event.color));
         this.effects.boom(event.x, event.y, event.color, event.radius);
         this.audio.play("bomb");
         break;
       case "rain":
+        // The server stamps one drop immediately, then one every 50 ms.
+        event.drops.forEach((drop, index) => {
+          this.pendingPaint.push({
+            x: drop.x,
+            y: drop.y,
+            radius: event.radius,
+            color: paletteColor(event.color),
+            delay: index * 0.05,
+          });
+        });
         this.effects.rain(event.drops, event.color, event.radius);
         this.audio.playRain();
         break;
@@ -326,6 +347,7 @@ export class SceneRenderer {
         break;
       case "end":
         this.countdown.visible = false;
+        this.pendingPaint.length = 0;
         break;
     }
   }
@@ -337,11 +359,22 @@ export class SceneRenderer {
     else this.audio.play("s_go");
   }
 
+  private flushPendingPaint(dt: number): void {
+    for (let index = this.pendingPaint.length - 1; index >= 0; index -= 1) {
+      const stamp = this.pendingPaint[index]!;
+      stamp.delay -= dt;
+      if (stamp.delay > 0) continue;
+      this.paint.stamp(stamp.x, stamp.y, stamp.radius, stamp.color);
+      this.pendingPaint.splice(index, 1);
+    }
+  }
+
   update(dt: number): void {
     const snapshot = this.snapshot;
     if (!snapshot) {
       return;
     }
+    this.flushPendingPaint(dt);
     const now = performance.now() / 1000;
     const sources: [PlayerSnapshot, PlayerSnapshot] = [snapshot.a, snapshot.b];
 
@@ -433,12 +466,16 @@ export class SceneRenderer {
           y: display.y,
           angle,
           radius: source.r,
-          colorIndex: source.c,
+          // The brush sprite keeps its lobby palette even while `follow_me`
+          // changes the paint colour (reference brush icons are name-based).
+          colorIndex: this.palettes[slot] ?? source.c,
+          paintIndex: source.c,
           lift,
           squash,
           swing: this.effects.swingAngle(PLAYER_NAMES[slot]!),
           modeStep,
           jumpProgress,
+          jumping: (source.fl & FLAG_JUMPING) !== 0,
           knockback: (source.fl & FLAG_KNOCKBACK) !== 0,
           bandi: (source.fl & FLAG_BANDI) !== 0,
           bandiLeft,
@@ -478,9 +515,6 @@ export class SceneRenderer {
             ? snapshot.ticksLeft
             : this.totalTicks,
         totalTicks: this.totalTicks,
-        names: this.names,
-        scores: snapshot.scores,
-        palettes: this.palettes,
         musicOn: this.audio.musicEnabled,
         sfxOn: this.audio.sfxEnabled,
         phase: snapshot.phase,
