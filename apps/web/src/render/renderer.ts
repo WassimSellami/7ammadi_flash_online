@@ -101,6 +101,7 @@ export class SceneRenderer {
   private palettes: [number, number] = [2, 0];
   private ownSlot: 0 | 1 | null = null;
   private activeSlots: 1 | 2 = 2;
+  private gameVisible = false;
   private ownInputLeft = false;
   private ownInputRight = false;
   private predictedAngle = 180;
@@ -151,7 +152,7 @@ export class SceneRenderer {
       soundOff: assets.soundOff,
       onMusic: () => {
         audio.toggleMusic();
-        if (audio.musicEnabled) audio.startMusic();
+        if (audio.musicEnabled && this.snapshot?.phase === "playing") audio.startMusic();
         else audio.stopMusic();
       },
       onSound: () => {
@@ -170,6 +171,7 @@ export class SceneRenderer {
       this.countdown,
     );
     app.stage.addChild(this.world);
+    this.setGameVisible(false);
     this.resize();
     app.renderer.on("resize", () => this.resize());
   }
@@ -192,12 +194,29 @@ export class SceneRenderer {
 
   setActiveSlots(count: 1 | 2): void {
     this.activeSlots = count;
-    this.players[1].container.visible = count === 2;
+    this.players[1].container.visible = this.gameVisible && count === 2;
+  }
+
+  /** Hide brushes/prizes/paint while a DOM menu is in front of the arena. */
+  setGameVisible(visible: boolean): void {
+    this.gameVisible = visible;
+    this.paint.container.visible = visible;
+    this.effects.container.visible = visible;
+    this.effects.labels.visible = visible;
+    this.prize.container.visible = visible;
+    this.players[0].container.visible = visible;
+    this.players[1].container.visible = visible && this.activeSlots === 2;
+    if (!visible) this.countdown.visible = false;
   }
 
   setLocalInput(left: boolean, right: boolean): void {
     this.ownInputLeft = left;
     this.ownInputRight = right;
+  }
+
+  /** Keep the top HUD bar visible on countdown and results too. */
+  setHudEnabled(enabled: boolean): void {
+    this.hud.setEnabled(enabled);
   }
 
   get snapshotState(): Snapshot | null {
@@ -515,7 +534,9 @@ export class SceneRenderer {
         remainingTicks:
           snapshot.phase === "playing"
             ? snapshot.ticksLeft
-            : this.totalTicks,
+            : snapshot.phase === "result"
+              ? 0
+              : this.totalTicks,
         totalTicks: this.totalTicks,
         musicOn: this.audio.musicEnabled,
         sfxOn: this.audio.sfxEnabled,

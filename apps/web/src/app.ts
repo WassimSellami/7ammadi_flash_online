@@ -3,6 +3,7 @@ import type { Snapshot } from "@flash/core";
 import type { RoundEndMessage, StateMessage, WelcomeMessage } from "@flash/protocol";
 import { AudioManager } from "./audio/audio";
 import {
+  ASSET_BASE,
   STORAGE,
   httpBase,
   inviteUrl,
@@ -12,12 +13,12 @@ import {
 import { KeyboardInput } from "./input/keyboard";
 import { OnlineClient, type ConnectionStatus } from "./net/client";
 import { OfflineClient, type OfflineRoundEnd } from "./offline/client";
-import { loadAssets } from "./render/assets";
+import { loadAssets, type GameAssets } from "./render/assets";
 import { SceneRenderer } from "./render/renderer";
 import { button, clear, el, swatches, toast } from "./ui/dom";
 import { canInstall, promptInstall, registerServiceWorker, setupInstallPrompt } from "./pwa";
 
-type Screen = "boot" | "menu" | "online" | "lobby" | "game" | "result" | "paused" | "help";
+type Screen = "boot" | "menu" | "online" | "lobby" | "game" | "result" | "paused";
 type Mode = "online" | "hotseat";
 
 const DEFAULT_NAME = "Player";
@@ -28,6 +29,7 @@ export class FlashApp {
   private audio = new AudioManager();
   private input = new KeyboardInput();
   private renderer!: SceneRenderer;
+  private assets!: GameAssets;
   private ui!: HTMLElement;
   private screen: Screen = "boot";
   private mode: Mode | null = null;
@@ -48,6 +50,9 @@ export class FlashApp {
   private inputBlocked = true;
   private lastErrorAt = 0;
   private installing = false;
+  private resultToken = 0;
+  private pauseButtons: HTMLButtonElement[] = [];
+  private pauseIndex = 0;
 
   async start(): Promise<void> {
     registerServiceWorker();
@@ -70,6 +75,11 @@ export class FlashApp {
       loading.textContent = `Loading brushes… ${Math.round(fraction * 100)}%`;
     });
     await document.fonts.load('700 24px "Comic Neue"').catch(() => undefined);
+    this.assets = assets;
+    document.documentElement.style.setProperty(
+      "--scroll-board",
+      `url("${assets.scoreBoard}")`,
+    );
     this.renderer = new SceneRenderer(this.app, assets, this.audio);
     loading.remove();
 
@@ -129,7 +139,7 @@ export class FlashApp {
 
   private showLoading(): HTMLElement {
     clear(this.ui);
-    const screen = el("div", "screen compact");
+    const screen = el("div", "screen compact classic-page");
     const title = el("h1", undefined, "7ammadi Flash");
     title.style.margin = "0 0 8px";
     const line = el("p", "subtitle", "Warming up the brushes…");
@@ -142,6 +152,10 @@ export class FlashApp {
     this.screen = screen;
     this.inputBlocked = screen !== "game";
     if (screen !== "game") this.renderer.setLocalInput(false, false);
+    // The arcade HUD bar stays up during countdown, play and the score scroll.
+    const inArena = screen === "game" || screen === "result";
+    this.renderer.setHudEnabled(inArena);
+    this.renderer.setGameVisible(inArena);
   }
 
   // ---------------------------------------------------------------- menus
@@ -150,47 +164,33 @@ export class FlashApp {
     this.setScreen("menu");
     this.audio.stopMusic();
     clear(this.ui);
-    const screen = el("div", "screen");
+    const screen = el("div", "screen classic-page menu-page");
     const brand = el("div", "brand");
-    brand.append(el("h1", undefined, "7ammadi Flash"), el("span", "tag", "paint the arena"));
-    const subtitle = el(
-      "p",
-      "subtitle",
-      "Steer the brushes. Cover more of the arena than your rival before the clock runs out.",
-    );
+    brand.append(el("h1", undefined, "7ammadi Flash"));
 
-    const list = el("div", "menu-list");
+    const brushes = el("div", "menu-brushes");
+    this.assets.brushIcons.forEach((src, index) => {
+      const icon = el("img", "menu-brush");
+      icon.src = src;
+      icon.alt = "";
+      icon.draggable = false;
+      icon.style.setProperty("--tilt", `${index % 2 === 0 ? -6 : 6}deg`);
+      brushes.append(icon);
+    });
+
+    const list = el("div", "menu-list classic");
     list.append(
       button("Play online", () => this.showOnline(), {
-        className: "wide",
+        className: "wide menu-play",
         hint: "Create a room or join with a code — free, no account.",
       }),
-      button("Local hotseat", () => this.startLocal("hotseat"), {
-        className: "wide",
+      button("Play offline", () => this.startLocal("hotseat"), {
+        className: "wide menu-local",
         hint: "Two players, one keyboard. A/D and arrow keys.",
       }),
-      button("How to play", () => this.showHelp(), {
-        className: "wide",
-        hint: "Controls, prizes and scoring in 30 seconds.",
-      }),
     );
 
-    const footer = el("div", "row between");
-    footer.style.marginTop = "22px";
-    const audioRow = el("div", "row");
-    audioRow.append(
-      button(this.audio.musicEnabled ? "Music: on" : "Music: off", () => {
-        this.audio.toggleMusic();
-        if (this.audio.musicEnabled) this.audio.startMusic();
-        this.showMenu();
-      }, { className: "ghost" }),
-      button(this.audio.sfxEnabled ? "Sounds: on" : "Sounds: off", () => {
-        this.audio.toggleSfx();
-        this.showMenu();
-      }, { className: "ghost" }),
-    );
-
-    const installSlot = el("div", "row");
+    const installSlot = el("div", "menu-footer");
     installSlot.id = "install-slot";
     installSlot.hidden = !canInstall();
     installSlot.append(
@@ -200,39 +200,18 @@ export class FlashApp {
         void promptInstall().finally(() => {
           this.installing = false;
         });
-      }, { className: "ghost" }),
+      }, { className: "ghost install-button" }),
     );
 
-    footer.append(audioRow, installSlot);
-    screen.append(brand, subtitle, list, footer);
-    this.ui.append(screen);
-  }
-
-  private showHelp(): void {
-    this.setScreen("help");
-    clear(this.ui);
-    const screen = el("div", "screen compact");
-    screen.append(el("h2", undefined, "How to play"));
-    const help = el("div", "help");
-    help.innerHTML = `
-      <div><span class="kbd">A</span> / <span class="kbd">D</span> or <span class="kbd">←</span> <span class="kbd">→</span> steer your brush. Online, both sets steer your own brush.</div>
-      <div>Hotseat: player A uses <span class="kbd">A</span>/<span class="kbd">D</span>, player B uses the arrow keys.</div>
-      <div>Your brush paints constantly. Hitting the other brush sends both flying and slows you down for 5 seconds.</div>
-      <div>Prizes: <b>Speed</b>, <b>Fat</b>, <b>Bandi</b> (punch), <b>Rain</b>, <b>Boom</b>, and <b>Follow me</b> (both brushes use the winner's colour).</div>
-      <div>Scores are the percentage of the arena painted in your palette. Server scores are final online.</div>
-      <div>Round: 84 seconds, one prize every 12 seconds. Local mode can pause with <span class="kbd">Esc</span>.</div>
-    `;
-    const footer = el("div", "row");
-    footer.style.marginTop = "20px";
-    footer.append(button("Back", () => this.showMenu(), { className: "primary" }));
-    screen.append(help, footer);
+    screen.append(brand, brushes, list, installSlot);
     this.ui.append(screen);
   }
 
   private showOnline(prefill?: string): void {
     this.setScreen("online");
+    this.audio.stopMusic();
     clear(this.ui);
-    const screen = el("div", "screen");
+    const screen = el("div", "screen classic-page");
     screen.append(el("h2", undefined, "Play online"));
 
     const form = el("div", "grid two");
@@ -410,7 +389,11 @@ export class FlashApp {
     }
     if (state.phase === "countdown" || state.phase === "playing") {
       if (this.screen !== "game") this.showGameChrome();
-      if (this.audio.musicEnabled) this.audio.startMusic();
+      if (state.phase === "playing") {
+        if (this.audio.musicEnabled) this.audio.startMusic();
+      } else {
+        this.audio.stopMusic();
+      }
       return;
     }
     if (state.phase === "result") {
@@ -428,8 +411,9 @@ export class FlashApp {
 
   private showConnecting(code: string): void {
     this.setScreen("lobby");
+    this.audio.stopMusic();
     clear(this.ui);
-    const screen = el("div", "screen compact");
+    const screen = el("div", "screen compact classic-page");
     screen.append(
       el("h2", undefined, "Connecting…"),
       el("p", "subtitle", `Joining room ${code}`),
@@ -448,9 +432,10 @@ export class FlashApp {
 
   private showLobby(state: StateMessage): void {
     this.setScreen("lobby");
+    this.audio.stopMusic();
     clear(this.ui);
     const room = this.room ?? "";
-    const screen = el("div", "screen");
+    const screen = el("div", "screen classic-page");
     const header = el("div", "row between");
     header.append(el("h2", undefined, "Room"), el("span", "badge", "waiting"));
     screen.append(header, el("div", "code", room));
@@ -609,47 +594,45 @@ export class FlashApp {
   private showResult(): void {
     this.setScreen("result");
     this.audio.stopMusic();
+    this.resultToken += 1;
     clear(this.ui);
     const order = this.mode === "online" ? this.onlineOrder() : null;
     const scores = this.result?.scores ?? this.latestSnapshot?.scores ?? [0, 0];
     const winner = this.result?.winner ?? this.latestSnapshot?.win ?? null;
     const reason = this.result?.reason;
-    const names: [string, string] = order ? order.names : ["Player A", "Player B"];
     const palettes: [number, number] = order ? order.palettes : [2, 0];
 
-    const veil = el("div", "pause-veil");
-    const card = el("div", "overlay-card results");
-    card.append(el("h2", undefined, "Results"));
+    const veil = el("div", "pause-veil results-veil");
+    const scroll = el("div", "scroll-panel result-scroll");
+    const content = el("div", "result-content");
+    content.append(el("h2", "result-title", "Battle Results"));
 
-    const headline = el("p", "win");
-    if (reason === "abandoned") {
-      headline.textContent = "Both players left — no winner.";
-    } else if (winner === null) {
-      headline.textContent = "Draw";
-    } else {
-      const winnerName = names[winner === 0 ? 0 : 1]!;
-      headline.textContent = `${winnerName} wins`;
-      headline.style.color = paletteCss(palettes[winner === 0 ? 0 : 1]!);
-    }
-    headline.style.opacity = "0";
-    headline.style.transition = "opacity 250ms ease";
-    card.append(headline);
-
-    const row = el("div", "score-row");
+    const rows = el("div", "result-rows");
     const values: HTMLElement[] = [];
+    const trophies: HTMLImageElement[] = [];
     for (const index of [0, 1] as const) {
-      const score = el("div", "score-card");
-      score.append(el("div", "label", names[index]!));
-      const value = el("div", "value", "0%");
-      value.style.color = paletteCss(palettes[index]!);
-      score.append(value);
-      values.push(value);
-      row.append(score);
+      const row = el("div", "result-row");
+      const brush = el("img", "result-brush");
+      brush.src = this.brushIcon(palettes[index]!);
+      brush.alt = "";
+      brush.draggable = false;
+      const line = el("div", "result-line");
+      const label = el("span", "result-name", `Player ${index + 1} :`);
+      label.style.color = paletteCss(palettes[index]!);
+      const percent = el("span", "result-percent", "0%");
+      values.push(percent);
+      line.append(label, percent);
+      const trophy = el("img", "result-trophy");
+      trophy.src = `${ASSET_BASE}/icons/trophy.png`;
+      trophy.alt = winner === index ? "Winner" : "";
+      trophy.decoding = "async";
+      trophies.push(trophy);
+      row.append(brush, line, trophy);
+      rows.append(row);
     }
-    card.append(row);
+    content.append(rows);
 
-    const actions = el("div", "row");
-    actions.style.justifyContent = "center";
+    const actions = el("div", "result-actions");
     const online = this.mode === "online";
     const rematch = button("Rematch", () => {
       rematch.disabled = true;
@@ -657,48 +640,83 @@ export class FlashApp {
       if (online) this.online?.rematch();
       else this.offline?.rematch();
     }, { className: "primary" });
-    actions.append(rematch);
     actions.append(
+      rematch,
       button(online ? "Leave room" : "Main menu", () => {
         if (online) this.leaveOnline();
         else this.closeOffline();
         this.showMenu();
       }, { className: "ghost" }),
     );
-    card.append(actions);
+    content.append(actions);
     if (online && reason === "forfeit") {
-      card.append(el("p", "tiny", "A rematch needs both players present."));
+      content.append(el("p", "result-note", "A rematch needs both players present."));
     }
-    veil.append(card);
+    scroll.append(content);
+    veil.append(scroll);
     this.ui.append(veil);
-    this.animateResult(scores, values, headline);
+    this.playResultSequence(scores, rows, values, trophies, winner, actions);
   }
 
-  /** `Screen.draw_scoreboard`: count both percentages up, then reveal the winner. */
-  private animateResult(
+  private brushIcon(palette: number): string {
+    return this.assets.brushIcons[palette] ?? this.assets.brushIcons[0] ?? "";
+  }
+
+  /**
+   * Scoreboard reveal: the scroll drops in, then each line counts up with a
+   * cue, and finally the winner's trophy pops.
+   */
+  private playResultSequence(
     scores: readonly [number, number],
+    rows: HTMLElement,
     values: readonly HTMLElement[],
-    headline: HTMLElement,
+    trophies: readonly HTMLImageElement[],
+    winner: number | null,
+    actions: HTMLElement,
   ): void {
-    const countSpan = 1100;
-    const revealAt = countSpan + 450;
+    const token = this.resultToken;
+    const alive = (): boolean => this.screen === "result" && this.resultToken === token;
+    const at = (delay: number, fn: () => void): void => {
+      window.setTimeout(() => {
+        if (alive()) fn();
+      }, delay);
+    };
+
+    // The panel itself slides down from above the screen via CSS.
+    this.audio.play("scoreTick");
+
+    const reveal = (index: 0 | 1, delay: number): void => {
+      at(delay, () => {
+        rows.children.item(index)?.classList.add("shown");
+        this.audio.play("scoreTick");
+        this.countPercent(values[index]!, scores[index] ?? 0, 900, token);
+      });
+    };
+    reveal(0, 1700);
+    reveal(1, 3000);
+
+    at(4400, () => {
+      this.audio.play("scoreTick");
+      if (winner !== null) trophies[winner]?.classList.add("pop");
+    });
+
+    at(5600, () => actions.classList.add("shown"));
+  }
+
+  private countPercent(
+    node: HTMLElement,
+    score: number,
+    duration: number,
+    token: number,
+  ): void {
     const start = performance.now();
     const step = (): void => {
-      if (this.screen !== "result") return;
-      const elapsed = performance.now() - start;
-      const progress = Math.min(1, elapsed / countSpan);
+      if (this.screen !== "result" || this.resultToken !== token) return;
+      const progress = Math.min(1, (performance.now() - start) / duration);
       const eased = 1 - (1 - progress) ** 3;
-      for (const index of [0, 1] as const) {
-        values[index]!.textContent = `${Math.round((scores[index] ?? 0) * eased)}%`;
-      }
-      if (elapsed < revealAt) {
-        requestAnimationFrame(step);
-      } else {
-        for (const index of [0, 1] as const) {
-          values[index]!.textContent = `${scores[index] ?? 0}%`;
-        }
-        headline.style.opacity = "1";
-      }
+      node.textContent = `${Math.round(score * eased)}%`;
+      if (progress < 1) requestAnimationFrame(step);
+      else node.textContent = `${score}%`;
     };
     requestAnimationFrame(step);
   }
@@ -768,7 +786,11 @@ export class FlashApp {
       if (message.phase === "countdown" || message.phase === "playing") {
         if (this.screen !== "game") this.showGameChrome();
         this.inputBlocked = false;
-        if (this.audio.musicEnabled) this.audio.startMusic();
+        if (message.phase === "playing") {
+          if (this.audio.musicEnabled) this.audio.startMusic();
+        } else {
+          this.audio.stopMusic();
+        }
       }
     };
     this.offline.onRoundEnd = (message) => {
@@ -777,7 +799,6 @@ export class FlashApp {
     };
     this.showGameChrome();
     this.inputBlocked = false;
-    if (this.audio.musicEnabled) this.audio.startMusic();
   }
 
   private closeOffline(): void {
@@ -785,6 +806,8 @@ export class FlashApp {
     this.offline = null;
     if (this.mode !== "online") this.mode = null;
     this.paused = false;
+    this.pauseButtons = [];
+    this.pauseIndex = 0;
   }
 
   private setPaused(paused: boolean): void {
@@ -793,9 +816,13 @@ export class FlashApp {
     this.offline.setPaused(paused);
     this.input.clear();
     if (!paused) {
+      this.pauseButtons = [];
+      this.pauseIndex = 0;
       this.showGameChrome();
       this.inputBlocked = false;
-      if (this.audio.musicEnabled) this.audio.startMusic();
+      if (this.audio.musicEnabled && this.latestSnapshot?.phase === "playing") {
+        this.audio.startMusic();
+      }
       return;
     }
     this.inputBlocked = true;
@@ -804,22 +831,47 @@ export class FlashApp {
     const veil = el("div", "pause-veil");
     const card = el("div", "overlay-card");
     card.append(el("h2", undefined, "Paused"));
-    const row = el("div", "row");
-    row.style.justifyContent = "center";
-    row.append(
-      button("Resume", () => this.setPaused(false), { className: "primary" }),
-      button("Restart", () => {
-        this.closeOffline();
-        this.startLocal("hotseat");
-      }, { className: "ghost" }),
-      button("Main menu", () => {
-        this.closeOffline();
-        this.showMenu();
-      }, { className: "ghost" }),
-    );
-    card.append(row);
+    const menu = el("div", "overlay-menu");
+    const resume = button("Resume", () => this.setPaused(false), {
+      className: "primary wide",
+    });
+    const restart = button("Restart", () => {
+      this.closeOffline();
+      this.startLocal("hotseat");
+    }, { className: "ghost wide" });
+    const mainMenu = button("Main menu", () => {
+      this.closeOffline();
+      this.showMenu();
+    }, { className: "ghost wide" });
+    this.pauseButtons = [resume, restart, mainMenu];
+    this.pauseIndex = 0;
+    for (const item of this.pauseButtons) item.tabIndex = -1;
+    menu.append(...this.pauseButtons);
+    card.append(menu);
     veil.append(card);
     this.ui.append(veil);
+    this.updatePauseSelection();
+  }
+
+  private movePauseSelection(delta: number): void {
+    if (this.pauseButtons.length === 0) return;
+    this.pauseIndex =
+      (this.pauseIndex + delta + this.pauseButtons.length) % this.pauseButtons.length;
+    this.updatePauseSelection();
+    this.audio.play("scoreTick");
+  }
+
+  private updatePauseSelection(): void {
+    this.pauseButtons.forEach((item, index) => {
+      item.classList.toggle("selected", index === this.pauseIndex);
+    });
+  }
+
+  private selectPauseButton(): void {
+    const item = this.pauseButtons[this.pauseIndex];
+    if (!item) return;
+    this.audio.play("scoreTick");
+    item.click();
   }
 
   // --------------------------------------------------------------- input
@@ -845,6 +897,23 @@ export class FlashApp {
   }
 
   private onGlobalKeyDown = (event: KeyboardEvent): void => {
+    if (this.mode === "hotseat" && this.paused) {
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        this.movePauseSelection(-1);
+        return;
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        this.movePauseSelection(1);
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        this.selectPauseButton();
+        return;
+      }
+    }
     if (event.key !== "Escape") return;
     if (this.mode === "online" && this.screen === "game") {
       event.preventDefault();

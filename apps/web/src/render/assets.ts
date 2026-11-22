@@ -12,12 +12,16 @@ export interface BrushLayers {
 export interface GameAssets {
   background: Texture;
   brushes: Map<number, BrushLayers>;
+  /** Transparent 80x80 brush icons per palette, for the classic DOM menus. */
+  brushIcons: string[];
   prizeIcons: Map<PrizeKind, Texture>;
   musicOn: Texture;
   musicOff: Texture;
   soundOn: Texture;
   soundOff: Texture;
   whiteCircle: Texture;
+  /** `score_board.png` with its baked checkerboard backdrop removed. */
+  scoreBoard: string;
 }
 
 function makeCanvas(width: number, height: number): HTMLCanvasElement {
@@ -297,12 +301,39 @@ function circleTexture(): Texture {
   return Texture.from(canvas);
 }
 
+/** The supplied scroll PNG has a baked grey checkerboard, not alpha. */
+function scoreBoardDataUrl(image: HTMLImageElement): string {
+  const width = 1440;
+  const height = Math.round((image.height / image.width) * width);
+  const canvas = makeCanvas(width, height);
+  const ctx = context(canvas);
+  ctx.drawImage(image, 0, 0, width, height);
+  const pixels = ctx.getImageData(0, 0, width, height);
+  const data = pixels.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const r = data[index]!;
+    const g = data[index + 1]!;
+    const b = data[index + 2]!;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    // Neutral grey (the checker cells and their downscaled blend) goes away;
+    // the cream paper and gold rollers keep their saturation.
+    if (max - min <= 10 && r > 150 && r < 246) {
+      data[index + 3] = 0;
+    }
+  }
+  ctx.putImageData(pixels, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
 export async function loadAssets(onProgress?: (fraction: number) => void): Promise<GameAssets> {
   const brushes = new Map<number, BrushLayers>();
+  const brushIcons: string[] = [];
   const brushSource = await loadImage(`${ASSET_BASE}/icons/bria-rmbg3-cutout.png`);
   for (let index = 0; index < PAINT_PALETTE.length; index += 1) {
     const built = buildBrushIcon(brushSource, index);
     brushes.set(index, swingLayers(built.icon));
+    brushIcons.push(built.icon.toDataURL("image/png"));
     onProgress?.((index + 1) / (PAINT_PALETTE.length + PRIZE_KINDS.length + 3));
   }
 
@@ -313,20 +344,23 @@ export async function loadAssets(onProgress?: (fraction: number) => void): Promi
   }
   onProgress?.((PAINT_PALETTE.length + PRIZE_KINDS.length) / (PAINT_PALETTE.length + PRIZE_KINDS.length + 3));
 
-  const [music, volume, background] = await Promise.all([
+  const [music, volume, background, scoreBoard] = await Promise.all([
     loadImage(`${ASSET_BASE}/icons/music.png`),
     loadImage(`${ASSET_BASE}/icons/volume.png`),
     loadImage(`${ASSET_BASE}/icons/bg.jpg`),
+    loadImage(`${ASSET_BASE}/icons/score_board.png`),
   ]);
 
   return {
     background: Texture.from(background),
     brushes,
+    brushIcons,
     prizeIcons,
     musicOn: Texture.from(maxTintCanvas(music, 96, [255, 205, 94], false)),
     musicOff: Texture.from(maxTintCanvas(music, 96, [118, 132, 156], true)),
     soundOn: Texture.from(maxTintCanvas(volume, 96, [255, 205, 94], false)),
     soundOff: Texture.from(maxTintCanvas(volume, 96, [118, 132, 156], true)),
     whiteCircle: circleTexture(),
+    scoreBoard: scoreBoardDataUrl(scoreBoard),
   };
 }

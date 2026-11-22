@@ -1,7 +1,7 @@
 /**
  * In-game HUD, ported from `Screen.draw_round_timeline`: a single panel with
- * the round timeline, prize markers and the two audio toggles. Like the
- * reference, it only shows while the round is actually being played.
+ * the round timeline, prize markers and the two audio toggles. It stays up for
+ * the countdown, play and the score scroll so the top frame never disappears.
  */
 
 import { Container, Graphics, Sprite, type Texture } from "pixi.js";
@@ -35,6 +35,7 @@ export class Hud {
   private readonly soundOn: Texture;
   private readonly soundOff: Texture;
   private elapsed = 0;
+  private enabled = true;
 
   constructor(options: {
     musicOn: Texture;
@@ -71,8 +72,14 @@ export class Hud {
     this.container.visible = false;
   }
 
+  /** The HUD stays up for countdown, play and results, like the arcade bar. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    this.container.visible = enabled;
+  }
+
   update(state: HudState, dt: number): void {
-    this.container.visible = state.phase === "playing";
+    this.container.visible = this.enabled;
     if (!this.container.visible) return;
 
     this.elapsed += dt;
@@ -82,7 +89,7 @@ export class Hud {
     const remainingSeconds = state.remainingTicks / 60;
 
     let warning = 0;
-    if (elapsedTicks > 0 && remainingSeconds <= 10) {
+    if (state.phase === "playing" && elapsedTicks > 0 && remainingSeconds <= 10) {
       warning = Math.min(1, (10 - remainingSeconds) / 10);
     }
     const pulse = 0.5 + 0.5 * Math.sin(this.elapsed * 6);

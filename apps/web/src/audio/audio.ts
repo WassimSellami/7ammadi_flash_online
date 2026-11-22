@@ -16,6 +16,8 @@ const SFX: Record<string, SfxSpec> = {
   s_3: { file: "s_3.mp3", volume: 0.1 },
   s_2: { file: "s_2.mp3", volume: 0.1 },
   s_1: { file: "s_1.mp3", volume: 0.1 },
+  /* Scoreboard and menu cue: a short beep. */
+  scoreTick: { file: "beep.mp3", volume: 0.55 },
 };
 
 const MUSIC_VOLUME = 0.2;
@@ -30,6 +32,7 @@ export class AudioManager {
   private pools = new Map<string, HTMLAudioElement[]>();
   private poolIndex = new Map<string, number>();
   private music: HTMLAudioElement | null = null;
+  private musicWanted = false;
   private rainStop: number | null = null;
 
   constructor() {
@@ -59,7 +62,7 @@ export class AudioManager {
 
   unlock(): void {
     this.unlocked = true;
-    if (this.musicEnabled) this.startMusic();
+    if (this.musicWanted) this.playMusic();
   }
 
   play(name: SfxName): void {
@@ -96,29 +99,36 @@ export class AudioManager {
     }, 1500);
   }
 
-  startMusic(): void {
-    if (!this.musicEnabled) return;
+  private playMusic(): void {
+    if (!this.musicEnabled || !this.unlocked) return;
     if (!this.music) this.music = this.createMusic();
-    if (this.music.paused && this.unlocked) {
+    if (this.music.paused) {
       void this.music.play().catch(() => undefined);
     }
   }
 
+  /** Request the round music; it only starts for an unlocked playing round. */
+  startMusic(): void {
+    this.musicWanted = true;
+    this.playMusic();
+  }
+
   stopMusic(): void {
+    this.musicWanted = false;
     if (!this.music) return;
     this.music.pause();
     this.music.currentTime = 0;
   }
 
   pauseMusic(): void {
+    this.musicWanted = false;
     this.music?.pause();
   }
 
   setMusic(enabled: boolean): void {
     this.musicEnabled = enabled;
     writeFlag(STORAGE.music, enabled);
-    if (enabled) this.startMusic();
-    else this.stopMusic();
+    if (!enabled) this.stopMusic();
   }
 
   setSfx(enabled: boolean): void {
