@@ -60,6 +60,7 @@ try {
 
   await host.getByRole("button", { name: "I'm ready" }).click();
   await guest.getByRole("button", { name: "I'm ready" }).click();
+  await host.getByRole("button", { name: "Start game" }).click();
 
   await host.waitForSelector("#game-chip", { timeout: 15_000 });
   await guest.waitForSelector("#game-chip", { timeout: 15_000 });
@@ -81,8 +82,8 @@ try {
   await guest.waitForSelector("text=Results", { timeout: 30_000 });
   console.log("both saw results");
 
-  const hostScore = await host.locator(".score-card .value").first().textContent();
-  const guestScore = await guest.locator(".score-card .value").first().textContent();
+  const hostScore = await host.locator(".result-percent").first().textContent();
+  const guestScore = await guest.locator(".result-percent").first().textContent();
   console.log(`host sees ${hostScore}, guest sees ${guestScore}`);
 
   if (errors.length) {

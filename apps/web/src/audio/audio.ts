@@ -25,12 +25,17 @@ const POOL_SIZE = 5;
 
 export type SfxName = keyof typeof SFX;
 
+export type CountdownSfx = "s_3" | "s_2" | "s_1" | "s_go";
+
+const COUNTDOWN_SFX: readonly CountdownSfx[] = ["s_3", "s_2", "s_1", "s_go"];
+
 export class AudioManager {
   sfxEnabled: boolean;
   musicEnabled: boolean;
   private unlocked = false;
   private pools = new Map<string, HTMLAudioElement[]>();
   private poolIndex = new Map<string, number>();
+  private countdown = new Map<CountdownSfx, HTMLAudioElement>();
   private music: HTMLAudioElement | null = null;
   private musicWanted = false;
   private rainStop: number | null = null;
@@ -48,6 +53,13 @@ export class AudioManager {
       }
       this.pools.set(name, pool);
       this.poolIndex.set(name, 0);
+    }
+    for (const name of COUNTDOWN_SFX) {
+      const audio = new Audio(`${ASSET_BASE}/sounds/${SFX[name]!.file}`);
+      audio.preload = "auto";
+      audio.volume = SFX[name]!.volume;
+      audio.load();
+      this.countdown.set(name, audio);
     }
     if (this.musicEnabled) this.music = this.createMusic();
   }
@@ -77,6 +89,30 @@ export class AudioManager {
       void audio.play().catch(() => undefined);
     } catch {
       // Autoplay or decode failure: ignore, the next gesture retries.
+    }
+  }
+
+  /** One dedicated, preloaded clip per countdown label so it starts with the number. */
+  playCountdown(name: CountdownSfx): void {
+    if (!this.sfxEnabled || !this.unlocked) return;
+    for (const audio of this.countdown.values()) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    const audio = this.countdown.get(name);
+    if (!audio) return;
+    try {
+      audio.currentTime = 0;
+      void audio.play().catch(() => undefined);
+    } catch {
+      // Autoplay or decode failure: ignore.
+    }
+  }
+
+  stopCountdown(): void {
+    for (const audio of this.countdown.values()) {
+      audio.pause();
+      audio.currentTime = 0;
     }
   }
 
@@ -134,6 +170,7 @@ export class AudioManager {
   setSfx(enabled: boolean): void {
     this.sfxEnabled = enabled;
     writeFlag(STORAGE.sfx, enabled);
+    if (!enabled) this.stopCountdown();
   }
 
   toggleMusic(): boolean {

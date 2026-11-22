@@ -46,11 +46,14 @@ export function toast(message: string, duration = 2600): void {
 }
 
 export function swatches(
-  taken: number | null,
+  taken: number | readonly number[] | null,
   selected: number,
   onSelect: (index: number) => void,
 ): HTMLElement {
   const wrap = el("div", "swatches");
+  const takenSet = new Set(
+    taken === null ? [] : typeof taken === "number" ? [taken] : taken,
+  );
   const colors = ["rgb(255, 114, 170)", "rgb(254, 190, 80)", "rgb(74, 202, 79)", "rgb(28, 154, 255)"];
   colors.forEach((color, index) => {
     const node = el("button", "swatch");
@@ -58,8 +61,8 @@ export function swatches(
     node.style.background = color;
     node.setAttribute("aria-label", `Palette ${index + 1}`);
     node.setAttribute("aria-pressed", String(index === selected));
-    node.dataset.taken = String(taken === index);
-    if (taken === index) node.disabled = true;
+    node.dataset.taken = String(takenSet.has(index));
+    if (takenSet.has(index)) node.disabled = true;
     node.addEventListener("click", () => onSelect(index));
     wrap.append(node);
   });

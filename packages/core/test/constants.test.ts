@@ -46,4 +46,28 @@ describe("constants", () => {
     expect(modeStep(modeFromStep(0))).toBe(0);
     expect(modeStep(modeFromStep(42))).toBe(9);
   });
+
+  it("spawns near the middle as a line, Mercedes star or cross", () => {
+    const centerY = (74 + 1080) / 2;
+    const three = createSim({
+      palettes: [2, 0, 1, 3],
+      activeSlots: 3,
+      spawn: "cross",
+      countdownTicksPerLabel: 1,
+    });
+    expect(three.players.slice(0, 3).map((player) => player.angle)).toEqual([270, 30, 150]);
+    for (const player of three.players.slice(0, 3)) {
+      expect(Math.abs(player.x - 960)).toBeLessThanOrEqual(192);
+      expect(Math.abs(player.y - centerY)).toBeLessThanOrEqual(101);
+      expect(Math.hypot(player.x - 960, player.y - centerY)).toBeGreaterThan(80);
+    }
+
+    const four = createSim({
+      palettes: [2, 0, 1, 3],
+      activeSlots: 4,
+      spawn: "cross",
+      countdownTicksPerLabel: 1,
+    });
+    expect(four.players.map((player) => player.angle)).toEqual([270, 90, 0, 180]);
+  });
 });

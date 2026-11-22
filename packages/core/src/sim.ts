@@ -25,12 +25,15 @@ import {
   type PrizeKind,
 } from "./constants";
 import { armCollisionTimers, collisionCheck, updateCollisionTimers } from "./collision";
-import { createMask, scorePercent, stampCircle, EMPTY_CELL } from "./mask";
+import { createMask, scorePercent, stampCircle } from "./mask";
 import {
+  applySpawnPoint,
   changeAngle,
   changeCoor,
   createPlayer,
+  placePlayerAtSpawn,
   setupPlayer,
+  spawnPointsFor,
   updateJumpAnim,
   updatePowerup,
   updateSquash,
@@ -53,6 +56,7 @@ import {
   FLAG_SPEED,
   FLAG_SQUASH,
   NEUTRAL_INPUT,
+  SLOT_INDICES,
   type GameEvent,
   type InputState,
   type MatchPhase,
@@ -63,30 +67,65 @@ import {
   type Snapshot,
 } from "./types";
 
+const DEFAULT_SLOT_PALETTES: readonly number[] = [
+  DEFAULT_PALETTE_A,
+  DEFAULT_PALETTE_B,
+  1,
+  3,
+];
+
+function normalizeActiveSlots(value: number | readonly number[] | undefined): number[] {
+  if (typeof value === "number") {
+    const count = Math.max(1, Math.min(SLOT_INDICES.length, Math.trunc(value)));
+    return SLOT_INDICES.slice(0, count);
+  }
+  if (Array.isArray(value)) {
+    const unique = new Set<number>();
+    for (const slot of value) {
+      if (Number.isInteger(slot) && slot >= 0 && slot < SLOT_INDICES.length) {
+        unique.add(slot);
+      }
+    }
+    if (unique.size > 0) return [...unique].sort((a, b) => a - b);
+  }
+  return [0, 1];
+}
+
 export function createSim(config: SimConfig): SimState {
-  const palettes: [number, number] = [
-    config.palettes[0] ?? DEFAULT_PALETTE_A,
-    config.palettes[1] ?? DEFAULT_PALETTE_B,
-  ];
+  const palettes = SLOT_INDICES.map(
+    (slot) => config.palettes[slot] ?? DEFAULT_SLOT_PALETTES[slot]!,
+  );
   const roundTicks = config.roundTicks ?? ROUND_TICKS;
   const countdownTicksPerLabel =
     config.countdownTicksPerLabel ?? COUNTDOWN_TICKS_PER_LABEL;
   const seedText =
-    config.seed ?? `sim|${palettes[0]}|${palettes[1]}|${roundTicks}`;
+    config.seed ?? `sim|${palettes.join(",")}|${roundTicks}`;
+  const activeSlots = normalizeActiveSlots(config.activeSlots);
 
-  const playerA = createPlayer(0, palettes[0], 1);
-  const playerB = createPlayer(1, palettes[1], 2);
-  setupPlayer(playerA, palettes[0], IN_ANGLE_A, 1);
-  setupPlayer(playerB, palettes[1], IN_ANGLE_B, 2);
-  playerA.mode = NORMAL_MODE;
-  playerB.mode = NORMAL_MODE;
+  const players = SLOT_INDICES.map((slot) => {
+    const offset: 1 | 2 = slot === 1 ? 2 : 1;
+    const angle = slot === 1 ? IN_ANGLE_B : IN_ANGLE_A;
+    const player = createPlayer(slot, palettes[slot]!, offset);
+    setupPlayer(player, palettes[slot]!, angle, offset);
+    placePlayerAtSpawn(player, slot, config.spawn ?? "legacy");
+    player.mode = NORMAL_MODE;
+    return player;
+  });
+
+  if ((config.spawn ?? "legacy") === "cross") {
+    const points = spawnPointsFor(activeSlots.length);
+    activeSlots.forEach((slot, index) => {
+      const point = points[index];
+      if (point) applySpawnPoint(players[slot]!, point);
+    });
+  }
 
   const sim: SimState = {
     seed: 0,
     rng: new Rng(seedText),
     phase: "countdown",
     palettes,
-    activeSlots: config.activeSlots ?? 2,
+    activeSlots,
     tick: 0,
     countdownTicks: 0,
     countdownLabel: 0,
@@ -94,14 +133,14 @@ export function createSim(config: SimConfig): SimState {
     countdownTicksPerLabel,
     roundTick: 0,
     roundTicks,
-    players: [playerA, playerB],
+    players,
     prize: createPrizeState(),
     collisionActive: false,
     jumpTicksLeft: 0,
     brokenTicksLeft: 0,
     nextPrizeIndex: 1,
     mask: createMask(),
-    scores: [0, 0],
+    scores: activeSlots.map((slot) => players[slot]!.score),
     winner: null,
     endReason: null,
     events: [],
@@ -111,31 +150,41 @@ export function createSim(config: SimConfig): SimState {
 }
 
 export function activePlayers(sim: SimState): PlayerState[] {
-  return sim.players.slice(0, sim.activeSlots);
+  return sim.activeSlots.map((slot) => sim.players[slot]!);
 }
 
 /**
- * `Player.paint_both` quirk, preserved deliberately: both brushes stamp only
- * when Player A is *not* jumping. The reference always passes A first, so a
- * jump by B alone does not suppress painting.
+ * `Player.paint_both` quirk, preserved deliberately: brushes stamp only when
+ * the first active player is *not* jumping. The reference always passes A
+ * first, so a jump by B alone does not suppress painting.
  */
+function paintSuppressedQuirk(sim: SimState): boolean {
+  const players = activePlayers(sim);
+  // Reference quirk only for the original 1v1: A jumping suppresses B too.
+  return players.length <= 2 && (players[0]?.jumping ?? false);
+}
+
+function canPlayerPaint(player: PlayerState): boolean {
+  // Jumping does not stop stamping in the reference; only knockback/beaten.
+  return !(player.jumpingToWall || player.beaten);
+}
+
 export function paintFlag(sim: SimState): boolean {
-  return !sim.players[0].jumping;
+  if (paintSuppressedQuirk(sim)) return false;
+  return activePlayers(sim).some(canPlayerPaint);
 }
 
 function stampPaint(sim: SimState): void {
-  if (!paintFlag(sim)) return;
+  if (paintSuppressedQuirk(sim)) return;
   for (const player of activePlayers(sim)) {
-    // The plan adds knockback/beaten suppression on top of the A-jump quirk:
-    // a victim does not paint a streak while being knocked to the wall.
-    if (player.jumpingToWall || player.beaten) continue;
+    if (!canPlayerPaint(player)) continue;
     stampCircle(sim.mask, player.x, player.y, player.radius, player.paintIndex);
   }
 }
 
 export function stepSim(
   sim: SimState,
-  inputs: readonly [InputState, InputState],
+  inputs: readonly InputState[],
 ): GameEvent[] {
   sim.events = [];
   if (sim.phase === "result") return sim.events;
@@ -150,10 +199,7 @@ export function stepSim(
   return sim.events;
 }
 
-function stepCountdown(
-  sim: SimState,
-  inputs: readonly [InputState, InputState],
-): void {
+function stepCountdown(sim: SimState, inputs: readonly InputState[]): void {
   const elapsed = TICK_MS;
   for (const player of activePlayers(sim)) {
     if (!player.jumpingToWall) {
@@ -187,10 +233,7 @@ function stepCountdown(
   }
 }
 
-function stepPlaying(
-  sim: SimState,
-  inputs: readonly [InputState, InputState],
-): void {
+function stepPlaying(sim: SimState, inputs: readonly InputState[]): void {
   const elapsed = TICK_MS;
   const players = activePlayers(sim);
 
@@ -206,8 +249,7 @@ function stepPlaying(
 
   stampPaint(sim);
 
-  const started =
-    sim.activeSlots > 1 ? collisionCheck(sim, sim.events) : false;
+  const started = players.length > 1 ? collisionCheck(sim, sim.events) : false;
   if (started) armCollisionTimers(sim);
   updateCollisionTimers(sim);
 
@@ -242,7 +284,7 @@ function refreshScores(sim: SimState): void {
   for (const player of sim.players) {
     player.score = scorePercent(sim.mask, player.palette);
   }
-  sim.scores = [sim.players[0].score, sim.players[1].score];
+  sim.scores = activePlayers(sim).map((player) => player.score);
 }
 
 export function finishRound(
@@ -252,24 +294,36 @@ export function finishRound(
 ): void {
   if (sim.phase === "result") return;
   refreshScores(sim);
-  const [a, b] = sim.scores;
-  const winner =
-    forcedWinner !== undefined
-      ? forcedWinner
-      : reason === "abandoned"
-        ? null
-        : a > b
-          ? 0
-          : b > a
-            ? 1
-            : null;
+  const players = activePlayers(sim);
+  const scores = players.map((player) => player.score);
+  let winner: number | null;
+  if (forcedWinner !== undefined) {
+    winner = forcedWinner;
+  } else if (reason === "abandoned") {
+    winner = null;
+  } else {
+    let best = -1;
+    let bestSlot: number | null = null;
+    let tied = false;
+    for (const player of players) {
+      if (player.score > best) {
+        best = player.score;
+        bestSlot = player.slot;
+        tied = false;
+      } else if (player.score === best) {
+        tied = true;
+      }
+    }
+    winner = tied ? null : bestSlot;
+  }
   sim.phase = "result";
   sim.winner = winner;
+  sim.scores = scores;
   sim.endReason = reason;
   sim.events.push({
     tick: sim.tick,
     type: "end",
-    scores: [a, b],
+    scores,
     winner,
     reason,
   });
@@ -293,8 +347,9 @@ function roundAngle(angle: number): number {
   return Object.is(value, -0) ? 0 : value;
 }
 
-function snapshotPlayer(player: PlayerState): PlayerSnapshot {
+function snapshotPlayer(sim: SimState, player: PlayerState): PlayerSnapshot {
   return {
+    slot: player.slot,
     x: Math.round(player.x),
     y: Math.round(player.y),
     ang: roundAngle(player.angle),
@@ -302,21 +357,21 @@ function snapshotPlayer(player: PlayerState): PlayerSnapshot {
     r: Math.round(player.radius),
     fl: playerFlags(player),
     c: player.paintIndex,
+    pt: !paintSuppressedQuirk(sim) && canPlayerPaint(player),
   };
 }
 
 export function serializeSnapshot(sim: SimState): Snapshot {
-  const liveScores: [number, number] = [
-    scorePercent(sim.mask, sim.palettes[0]),
-    scorePercent(sim.mask, sim.palettes[1]),
-  ];
-  sim.scores = [liveScores[0], liveScores[1]];
+  const players = activePlayers(sim);
+  const liveScores = players.map((player) =>
+    scorePercent(sim.mask, player.palette),
+  );
+  sim.scores = [...liveScores];
   const snapshot: Snapshot = {
     v: 1,
     tick: sim.tick,
     phase: sim.phase,
-    a: snapshotPlayer(sim.players[0]),
-    b: snapshotPlayer(sim.players[1]),
+    players: players.map((player) => snapshotPlayer(sim, player)),
     prize: sim.prize.active
       ? {
           kind: sim.prize.kind!,

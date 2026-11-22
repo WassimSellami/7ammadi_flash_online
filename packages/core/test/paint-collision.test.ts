@@ -175,4 +175,66 @@ describe("collisions", () => {
     collisionCheck(sim, events);
     expect(events).toHaveLength(0);
   });
+
+  it("only breaks the players that actually collided", () => {
+    const sim = createSim({
+      palettes: [2, 0, 1, 3],
+      activeSlots: 3,
+      countdownTicksPerLabel: 1,
+      roundTicks: 2000,
+    });
+    for (let i = 0; i < 4; i += 1) stepSim(sim, noInput);
+    const [p1, p2, p3] = sim.players;
+    p1!.mode = WAIT_MODE;
+    p2!.mode = WAIT_MODE;
+    p3!.mode = WAIT_MODE;
+    p1!.x = 900;
+    p1!.y = 500;
+    p2!.x = 940;
+    p2!.y = 500;
+    p3!.x = 1600;
+    p3!.y = 800;
+
+    expect(collisionCheck(sim, [])).toBe(true);
+    armCollisionTimers(sim);
+    for (let i = 0; i < 84; i += 1) updateCollisionTimers(sim);
+
+    expect(p1!.brokenVisual).toBe(true);
+    expect(p2!.brokenVisual).toBe(true);
+    expect(p3!.brokenVisual).toBe(false);
+    expect(p3!.jumping).toBe(false);
+    expect(p3!.mode.step).toBe(WAIT_MODE.step);
+
+    p3!.x = 1200;
+    p3!.y = 300;
+    const before = paintedCount(sim.mask, p3!.palette);
+    stepSim(sim, noInput);
+    expect(paintedCount(sim.mask, p3!.palette)).toBeGreaterThan(before);
+  });
+
+  it("restores every follow_me colour after any collision", () => {
+    const sim = createSim({
+      palettes: [2, 0, 1, 3],
+      activeSlots: 4,
+      countdownTicksPerLabel: 1,
+      roundTicks: 2000,
+    });
+    for (let i = 0; i < 4; i += 1) stepSim(sim, noInput);
+    const [winner, a, b, bystander] = sim.players;
+    for (const player of sim.players) player.mode = WAIT_MODE;
+    // follow_me: everyone paints the winner's colour.
+    for (const player of sim.players) player.paintIndex = winner!.palette;
+    a!.x = 900;
+    a!.y = 500;
+    b!.x = 940;
+    b!.y = 500;
+    bystander!.x = 1600;
+    bystander!.y = 800;
+
+    collisionCheck(sim, []);
+
+    expect(a!.paintIndex).toBe(a!.palette);
+    expect(b!.paintIndex).toBe(b!.palette);
+    expect(bystander!.paintIndex).toBe(bystander!.palette);
+  });
 });

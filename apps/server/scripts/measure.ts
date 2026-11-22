@@ -17,8 +17,9 @@ const b = engine.join("Bravo", "tok-b");
 if (!a.ok || !b.ok) throw new Error("join failed");
 engine.ready(a.playerId, 2);
 engine.ready(b.playerId, 0);
+engine.start(a.playerId);
 
-let inbound = 2 + 2; // joins + ready
+let inbound = 2 + 2 + 1; // joins + ready + start
 let outbound = 0;
 let bytesOut = 0;
 let snapshots = 0;

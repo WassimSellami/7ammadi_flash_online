@@ -8,7 +8,7 @@ import type { Intent } from "../input/keyboard";
 export type OfflineMode = "hotseat";
 
 export interface OfflineRoundEnd {
-  scores: [number, number];
+  scores: number[];
   winner: number | null;
   reason: RoundEndReason;
 }
@@ -35,7 +35,7 @@ export class OfflineClient {
         | { type: "snapshot"; snapshot: Snapshot }
         | { type: "event"; event: GameEvent }
         | { type: "state"; phase: string; countdown?: number }
-        | { type: "roundEnd"; scores: [number, number]; winner: number | null; reason: RoundEndReason }
+        | { type: "roundEnd"; scores: number[]; winner: number | null; reason: RoundEndReason }
         | { type: "paused"; paused: boolean };
       switch (data.type) {
         case "snapshot":

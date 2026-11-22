@@ -62,7 +62,7 @@ describe("determinism", () => {
     for (let i = 0; i < 400; i += 1) stepSim(sim, scriptedInput(i));
     const snapshot = serializeSnapshot(sim);
     expect(snapshot.phase).toBe("playing");
-    expect(snapshot.a.x).toBeTypeOf("number");
+    expect(snapshot.players[0]!.x).toBeTypeOf("number");
     expect(snapshot.scores[0]).toBeGreaterThanOrEqual(0);
     const size = JSON.stringify(snapshot).length;
     expect(size).toBeLessThan(400);

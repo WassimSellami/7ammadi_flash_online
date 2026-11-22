@@ -8,8 +8,7 @@
  */
 
 import { finishRound } from "@flash/core";
-import { RoomEngine, type RoomRecord } from "@flash/server-engine";
-import {
+import { RoomEngine, type RoomRecord } from "@flash/server-engine";import {
   PROTOCOL_VERSION,
   encodeServerMessage,
   isValidRoomCode,
@@ -24,7 +23,7 @@ const DEFAULT_IDLE_MS = 30 * 60 * 1000;
 
 interface SocketAttachment {
   playerId: string;
-  slot: 0 | 1;
+  slot: 0 | 1 | 2 | 3;
 }
 
 interface RateBucket {
@@ -235,6 +234,7 @@ export class Room implements DurableObject {
         v: PROTOCOL_VERSION,
         playerId: joined.playerId,
         slot: joined.slot,
+        host: engine.hostSlot === joined.slot,
         config: engine.configWire(),
         serverTick: engine.engineTick,
         token: joined.token,
@@ -258,6 +258,21 @@ export class Room implements DurableObject {
     switch (msg.t) {
       case "ready": {
         const result = engine.ready(attachment.playerId, msg.palette);
+        if (!result.ok) this.sendError(ws, result.code);
+        await this.persist();
+        this.broadcastState();
+        this.ensureLoop();
+        break;
+      }
+      case "color": {
+        const result = engine.color(attachment.playerId, msg.palette);
+        if (!result.ok) this.sendError(ws, result.code);
+        await this.persist();
+        this.broadcastState();
+        break;
+      }
+      case "start": {
+        const result = engine.start(attachment.playerId);
         if (!result.ok) this.sendError(ws, result.code);
         await this.persist();
         this.broadcastState();
@@ -329,12 +344,15 @@ export class Room implements DurableObject {
       if (!this.engine) return;
       const now = performance.now();
       let catchUp = 0;
-      while (this.loopNext <= now && catchUp < 3) {
+      while (this.loopNext <= now && catchUp < 8) {
         this.step();
         this.loopNext += TICK_MS;
         catchUp += 1;
       }
-      if (this.loopNext < now) this.loopNext = now;
+      // Catch up after a short stall; only drop time after a long pause.
+      if (this.loopNext < now && now - this.loopNext > 1000) {
+        this.loopNext = now - 1000;
+      }
       const engine = this.engine;
       if (!engine) return;
       if (engine.phase === "countdown" || engine.phase === "playing") {
@@ -416,7 +434,13 @@ export class Room implements DurableObject {
     const value = socket.deserializeAttachment?.();
     if (!value || typeof value !== "object") return null;
     const candidate = value as Partial<SocketAttachment>;
-    if (typeof candidate.playerId !== "string" || (candidate.slot !== 0 && candidate.slot !== 1)) {
+    if (
+      typeof candidate.playerId !== "string" ||
+      (candidate.slot !== 0 &&
+        candidate.slot !== 1 &&
+        candidate.slot !== 2 &&
+        candidate.slot !== 3)
+    ) {
       return null;
     }
     return candidate as SocketAttachment;

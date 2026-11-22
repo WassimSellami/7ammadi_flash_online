@@ -25,11 +25,12 @@ function startRoom(options?: {
   if (!a.ok || !b.ok) throw new Error("join failed");
   expect(engine.ready(a.playerId, 2).ok).toBe(true);
   expect(engine.ready(b.playerId, 0).ok).toBe(true);
+  expect(engine.start(a.playerId).ok).toBe(true);
   return { engine, a, b };
 }
 
 describe("RoomEngine lobby", () => {
-  it("rejects duplicate palettes and a third player", () => {
+  it("rejects duplicate palettes and fills all four slots", () => {
     const engine = new RoomEngine({ code: "LMNO" });
     const a = engine.join("Alice", token());
     const b = engine.join("Bob", token());
@@ -38,14 +39,74 @@ describe("RoomEngine lobby", () => {
     expect(engine.ready(b.playerId, 2)).toEqual({ ok: false, code: "palette_taken" });
     expect(engine.ready(b.playerId, 0).ok).toBe(true);
     const third = engine.join("Carol", token());
-    expect(third.ok).toBe(false);
-    if (!third.ok) expect(third.code).toBe("room_full");
+    const fourth = engine.join("Dave", token());
+    expect(third.ok).toBe(true);
+    expect(fourth.ok).toBe(true);
+    const fifth = engine.join("Eve", token());
+    expect(fifth.ok).toBe(false);
+    if (!fifth.ok) expect(fifth.code).toBe("room_full");
   });
 
-  it("starts when both players are ready", () => {
+  it("lets the host start with two ready players", () => {
     const { engine } = startRoom();
     expect(engine.phase).toBe("countdown");
     expect(engine.metrics.matches).toBe(1);
+  });
+
+  it("only lets the host start and requires ready players", () => {
+    const engine = new RoomEngine({ code: "HOST" });
+    const a = engine.join("Alice", token());
+    if (!a.ok) throw new Error("join failed");
+    expect(engine.start(a.playerId)).toEqual({ ok: false, code: "not_enough_players" });
+    const b = engine.join("Bob", token());
+    if (!b.ok) throw new Error("join failed");
+    expect(engine.start(a.playerId)).toEqual({ ok: false, code: "not_ready" });
+    engine.ready(a.playerId, 2);
+    expect(engine.start(a.playerId)).toEqual({ ok: false, code: "not_ready" });
+    engine.ready(b.playerId, 0);
+    expect(engine.start(b.playerId)).toEqual({ ok: false, code: "not_host" });
+    expect(engine.start(a.playerId)).toEqual({ ok: true, started: true });
+  });
+
+  it("broadcasts a lobby colour change without readying up", () => {
+    const engine = new RoomEngine({ code: "COLR" });
+    const a = engine.join("Alice", token());
+    const b = engine.join("Bob", token());
+    if (!a.ok || !b.ok) throw new Error("join failed");
+    expect(engine.color(a.playerId, 1)).toEqual({ ok: true });
+    expect(engine.slots[a.slot]?.palette).toBe(1);
+    expect(engine.slots[a.slot]?.ready).toBe(false);
+    const seenByB = engine
+      .stateFor(b.slot)
+      .slots.find((slot) => slot.slot === a.slot);
+    expect(seenByB?.palette).toBe(1);
+    expect(engine.color(b.playerId, 1)).toEqual({
+      ok: false,
+      code: "palette_taken",
+    });
+  });
+
+  it("starts a four-player match on the four midpoints", () => {
+    const engine = new RoomEngine({
+      code: "FOUR",
+      matchConfig: { roundTicks: 60, countdownTicksPerLabel: 1 },
+    });
+    const names = ["Alpha", "Bravo", "Charlie", "Delta"];
+    const palettes = [2, 0, 1, 3];
+    const joined = names.map((name, index) => {
+      const result = engine.join(name, token());
+      if (!result.ok) throw new Error("join failed");
+      expect(engine.ready(result.playerId, palettes[index]!).ok).toBe(true);
+      return result;
+    });
+    expect(engine.start(joined[0]!.playerId).ok).toBe(true);
+    const sim = engine.simState;
+    expect(sim).not.toBeNull();
+    expect(sim!.activeSlots).toEqual([0, 1, 2, 3]);
+    expect(sim!.players[0]!.x).toBe(960);
+    expect(sim!.players[0]!.y).toBeLessThan(sim!.players[1]!.y);
+    expect(sim!.players[2]!.x).toBeGreaterThan(sim!.players[3]!.x);
+    expect(sim!.players[2]!.y).toBe(sim!.players[3]!.y);
   });
 
   it("reconnects with the stored token into the same slot", () => {
@@ -127,6 +188,35 @@ describe("RoomEngine ticks", () => {
     engine.input(a.playerId, { left: true, right: false }, 5, 0);
     engine.input(a.playerId, { left: false, right: true }, 4, 0);
     expect(engine.slots[0]?.input).toEqual({ left: true, right: false });
+  });
+
+  it("runs a four-player round and serializes all four slots", () => {
+    const engine = new RoomEngine({
+      code: "FOUR",
+      matchConfig: { roundTicks: 30, countdownTicksPerLabel: 1 },
+    });
+    const palettes = [2, 0, 1, 3];
+    const joined = ["Alpha", "Bravo", "Charlie", "Delta"].map((name, index) => {
+      const result = engine.join(name, token());
+      if (!result.ok) throw new Error("join failed");
+      engine.ready(result.playerId, palettes[index]!);
+      return result;
+    });
+    engine.start(joined[0]!.playerId);
+
+    let lastSnapshot = null as ReturnType<RoomEngine["snapshotNow"]>;
+    let endScores: number[] | null = null;
+    for (let i = 0; i < 200 && engine.phase !== "result"; i += 1) {
+      const output = engine.tick();
+      if (output.snapshots.length > 0) lastSnapshot = output.snapshots.at(-1)!;
+      for (const event of output.events) {
+        if (event.type === "end") endScores = event.scores;
+      }
+    }
+    expect(engine.phase).toBe("result");
+    expect(lastSnapshot?.players).toHaveLength(4);
+    expect(lastSnapshot?.players.map((player) => player.slot)).toEqual([0, 1, 2, 3]);
+    expect(endScores).toHaveLength(4);
   });
 });
 

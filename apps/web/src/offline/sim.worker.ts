@@ -66,7 +66,7 @@ function startLoop(): void {
     if (!sim) return;
     const now = performance.now();
     let catchUp = 0;
-    while (nextTickAt <= now && catchUp < 3) {
+    while (nextTickAt <= now && catchUp < 8) {
       if (!paused && sim.phase !== "result") {
         const events = stepSim(sim, inputs);
         for (const event of events) {
@@ -88,7 +88,8 @@ function startLoop(): void {
       nextTickAt += 1000 / 60;
       catchUp += 1;
     }
-    if (nextTickAt < now) nextTickAt = now;
+    // Catch up after a short stall; only drop time after a long background pause.
+    if (nextTickAt < now && now - nextTickAt > 1000) nextTickAt = now - 1000;
     if (!sim) return;
     if (sim.phase === "result") {
       // Keep a short idle loop so a rematch can restart cleanly.

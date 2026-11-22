@@ -69,6 +69,14 @@ describe("node adapter over WebSocket", () => {
 
     send(a, { t: "ready", palette: 2 });
     send(b, { t: "ready", palette: 0 });
+    await waitFor(
+      a,
+      (message) =>
+        message.t === "state" &&
+        message.slots.length === 2 &&
+        message.slots.every((slot) => slot.ready),
+    );
+    send(a, { t: "start" });
 
     const roundEnd = await waitFor(
       a,
@@ -127,6 +135,14 @@ describe("node adapter over WebSocket", () => {
 
     send(a, { t: "ready", palette: 2 });
     send(b, { t: "ready", palette: 0 });
+    await waitFor(
+      a,
+      (message) =>
+        message.t === "state" &&
+        message.slots.length === 2 &&
+        message.slots.every((slot) => slot.ready),
+    );
+    send(a, { t: "start" });
     await waitFor(a, (message) => message.t === "state" && message.phase === "playing");
 
     a.socket.close();

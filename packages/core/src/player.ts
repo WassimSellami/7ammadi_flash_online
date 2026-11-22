@@ -29,12 +29,63 @@ import {
   type Mode,
 } from "./constants";
 import type { Rng } from "./rng";
-import type { InputState, PlayerState, Vec2 } from "./types";
+import type { InputState, PlayerState, SlotIndex, Vec2 } from "./types";
+
+const SLOT_SPAWN_ANGLES: Record<SlotIndex, number> = {
+  0: 90,
+  1: 270,
+  2: 180,
+  3: 0,
+};
+
+export type SpawnMode = "legacy" | "cross";
+
+export interface SpawnPoint {
+  x: number;
+  y: number;
+  angle: number;
+}
+
+/** Outward angles (degrees, y down) for the 2/3/4-player starting shapes. */
+const SPAWN_ANGLES: Record<number, readonly number[]> = {
+  1: [0],
+  2: [180, 0],
+  3: [270, 30, 150],
+  4: [270, 90, 0, 180],
+};
+
+/**
+ * Starting points around the middle: a 10% offset from the centre in each
+ * direction, arranged as a line (2), Mercedes star (3) or cross (4).
+ */
+export function spawnPointsFor(count: number): SpawnPoint[] {
+  const clamped = Math.max(1, Math.min(4, Math.trunc(count)));
+  const angles = SPAWN_ANGLES[clamped] ?? SPAWN_ANGLES[4]!;
+  const centerX = D_WIDTH / 2;
+  const centerY = (PLAYFIELD_TOP + PLAYFIELD_BOTTOM) / 2;
+  const radiusX = D_WIDTH * 0.1;
+  const radiusY = (PLAYFIELD_BOTTOM - PLAYFIELD_TOP) * 0.1;
+  return angles.map((angle) => {
+    const rad = (angle * Math.PI) / 180;
+    return {
+      x: centerX + Math.cos(rad) * radiusX,
+      y: centerY + Math.sin(rad) * radiusY,
+      angle,
+    };
+  });
+}
+
+export function applySpawnPoint(player: PlayerState, point: SpawnPoint): void {
+  player.x = point.x;
+  player.y = point.y;
+  player.angle = point.angle;
+  clampToPlayfield(player);
+}
 
 export function createPlayer(
-  slot: 0 | 1,
+  slot: SlotIndex,
   palette: number,
-  offset: 1 | 2,
+  offset: 1 | 2 = 1,
 ): PlayerState {
   return {
     slot,
@@ -62,6 +113,8 @@ export function createPlayer(
     squashStrength: 1,
     punchContacted: false,
     jumpingToWall: false,
+    collisionJumpTicks: 0,
+    collisionBrokenTicks: 0,
     knockbackElapsed: 0,
     knockbackDuration: KNOCKBACK_TIME,
     knockbackStartY: D_HEIGHT / 2,
@@ -165,6 +218,8 @@ export function setupPlayer(
   player.jumping = false;
   clearKnockback(player);
   player.punchContacted = false;
+  player.collisionJumpTicks = 0;
+  player.collisionBrokenTicks = 0;
   player.x = (offset * D_WIDTH) / 3;
   player.y = D_HEIGHT / 2;
   player.mode = WAIT_MODE;
@@ -179,6 +234,41 @@ export function setupPlayer(
   player.bandiTimeLeft = 0;
   player.jumpProgress = 0;
   player.brokenVisual = false;
+  clampToPlayfield(player);
+}
+
+export function placePlayerAtSpawn(
+  player: PlayerState,
+  slot: SlotIndex,
+  mode: SpawnMode = "legacy",
+): void {
+  const margin = iconMargin(player.radius);
+  const midY = (PLAYFIELD_TOP + PLAYFIELD_BOTTOM) / 2;
+  if (mode === "legacy" && (slot === 0 || slot === 1)) {
+    player.x = ((slot === 1 ? 2 : 1) * D_WIDTH) / 3;
+    player.y = D_HEIGHT / 2;
+    player.angle = slot === 0 ? IN_ANGLE_A : IN_ANGLE_B;
+  } else {
+    switch (slot) {
+      case 0:
+        player.x = D_WIDTH / 2;
+        player.y = PLAYFIELD_TOP + margin;
+        break;
+      case 1:
+        player.x = D_WIDTH / 2;
+        player.y = PLAYFIELD_BOTTOM - margin;
+        break;
+      case 2:
+        player.x = D_WIDTH - margin;
+        player.y = midY;
+        break;
+      default:
+        player.x = margin;
+        player.y = midY;
+        break;
+    }
+    player.angle = SLOT_SPAWN_ANGLES[slot];
+  }
   clampToPlayfield(player);
 }
 

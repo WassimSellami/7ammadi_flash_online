@@ -21,6 +21,7 @@ for (let room = 0; room < ROOMS; room += 1) {
   if (!a.ok || !b.ok) throw new Error("join failed");
   engine.ready(a.playerId, 2);
   engine.ready(b.playerId, 0);
+  engine.start(a.playerId);
   rooms.push(engine);
 }
 

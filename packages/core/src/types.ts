@@ -7,6 +7,12 @@ export interface Vec2 {
   y: number;
 }
 
+/** Online rooms support up to four brushes. */
+export type SlotIndex = 0 | 1 | 2 | 3;
+
+export const SLOT_INDICES: readonly SlotIndex[] = [0, 1, 2, 3];
+export const MAX_PLAYERS = SLOT_INDICES.length;
+
 export interface InputState {
   left: boolean;
   right: boolean;
@@ -21,7 +27,7 @@ export type RoundEndReason = "time" | "forfeit" | "abandoned";
 export type Powerup = PrizeKind | null;
 
 export interface PlayerState {
-  slot: 0 | 1;
+  slot: SlotIndex;
   x: number;
   y: number;
   angle: number;
@@ -48,6 +54,10 @@ export interface PlayerState {
   squashStrength: number;
   punchContacted: boolean;
   jumpingToWall: boolean;
+  /** Per-player collision jump timer (ticks). */
+  collisionJumpTicks: number;
+  /** Per-player broken/slow timer (ticks). */
+  collisionBrokenTicks: number;
   knockbackElapsed: number;
   knockbackDuration: number;
   knockbackStartY: number;
@@ -71,13 +81,16 @@ export interface PrizeState {
 }
 
 export interface SimConfig {
-  palettes: readonly [number, number];
+  /** Palette per slot. Missing entries fall back to that slot's default. */
+  palettes: readonly number[];
   /** Playing ticks in the round. Defaults to 5040 (84 s at 60 Hz). */
   roundTicks?: number;
   /** Ticks per countdown label. Defaults to 60 (1 s). */
   countdownTicksPerLabel?: number;
-  /** Active slots: 1 for solo, 2 for 1v1. */
-  activeSlots?: 1 | 2;
+  /** Active slots: a count (1-4) or explicit slot indices. */
+  activeSlots?: number | readonly number[];
+  /** Legacy spawns A-left/B-right; cross uses the four playfield midpoints. */
+  spawn?: "legacy" | "cross";
   /** Seed text. Defaults to palettes + round length. */
   seed?: string;
 }
@@ -86,8 +99,9 @@ export interface SimState {
   seed: number;
   rng: Rng;
   phase: MatchPhase;
-  palettes: [number, number];
-  activeSlots: 1 | 2;
+  palettes: number[];
+  /** Room slot indices that take part in the match. */
+  activeSlots: number[];
   /** Absolute tick since the match started (countdown included). */
   tick: number;
   countdownTicks: number;
@@ -96,14 +110,16 @@ export interface SimState {
   countdownTicksPerLabel: number;
   roundTick: number;
   roundTicks: number;
-  players: [PlayerState, PlayerState];
+  /** Always four players; only `activeSlots` are stepped and painted. */
+  players: PlayerState[];
   prize: PrizeState;
   collisionActive: boolean;
   jumpTicksLeft: number;
   brokenTicksLeft: number;
   nextPrizeIndex: number;
   mask: MaskState;
-  scores: [number, number];
+  /** Active-player scores, in active-slot order. */
+  scores: number[];
   winner: number | null;
   endReason: RoundEndReason | null;
   events: GameEvent[];
@@ -132,7 +148,7 @@ export type GameEvent = {
   | { type: "count"; label: string }
   | {
       type: "end";
-      scores: [number, number];
+      scores: number[];
       winner: number | null;
       reason: RoundEndReason;
     }
@@ -149,6 +165,7 @@ export const FLAG_BROKEN = 64;
 export const FLAG_SQUASH = 128;
 
 export interface PlayerSnapshot {
+  slot: SlotIndex;
   x: number;
   y: number;
   /** Angle in degrees, rounded to 2 decimals. */
@@ -159,6 +176,8 @@ export interface PlayerSnapshot {
   fl: number;
   /** Paint palette index. */
   c: number;
+  /** Whether this player is currently allowed to stamp paint. */
+  pt: boolean;
 }
 
 export interface PrizeSnapshot {
@@ -173,10 +192,11 @@ export interface Snapshot {
   v: 1;
   tick: number;
   phase: MatchPhase;
-  a: PlayerSnapshot;
-  b: PlayerSnapshot;
+  /** Active players in slot order. */
+  players: PlayerSnapshot[];
   prize: PrizeSnapshot | null;
-  scores: [number, number];
+  /** Active-player scores, aligned with `players`. */
+  scores: number[];
   ticksLeft: number;
   /** Total playing ticks in this round. */
   total?: number;

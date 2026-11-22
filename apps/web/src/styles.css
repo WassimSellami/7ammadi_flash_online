@@ -902,6 +902,23 @@ input[type="text"][name="name"] {
   text-align: center;
 }
 
+.result-content.many {
+  width: 72%;
+}
+
+.result-content.many .result-row {
+  --result-icon: clamp(42px, 5vw, 64px);
+  gap: clamp(8px, 1.2vw, 16px);
+}
+
+.result-content.many .result-name {
+  font-size: clamp(17px, 2.2vw, 30px);
+}
+
+.result-content.many .result-percent {
+  font-size: clamp(26px, 3.4vw, 46px);
+}
+
 @keyframes scoreDrop {
   from {
     transform: translateY(-135vh);

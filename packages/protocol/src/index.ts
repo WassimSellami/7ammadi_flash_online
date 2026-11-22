@@ -5,12 +5,13 @@
  * wire format cannot drift between environments.
  */
 
-import type { GameEvent, RoundEndReason, Snapshot } from "@flash/core";
+import type { GameEvent, RoundEndReason, SlotIndex, Snapshot } from "@flash/core";
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 2048;
 export const ROOM_CODE_PATTERN = /^[A-Z0-9]{4,8}$/;
 export const NAME_MAX = 16;
+export const MAX_SLOTS = 4;
 
 export type RoomPhase = "lobby" | "countdown" | "playing" | "result";
 
@@ -23,7 +24,7 @@ export interface RoomConfigWire {
 }
 
 export interface SlotWire {
-  slot: 0 | 1;
+  slot: SlotIndex;
   name: string;
   palette: number;
   ready: boolean;
@@ -41,6 +42,16 @@ export interface JoinMessage {
 export interface ReadyMessage {
   t: "ready";
   palette: number;
+}
+
+/** Colour change while still in the lobby (does not mark the slot ready). */
+export interface ColorMessage {
+  t: "color";
+  palette: number;
+}
+
+export interface StartMessage {
+  t: "start";
 }
 
 export interface InputMessage {
@@ -67,6 +78,8 @@ export interface PingMessage {
 export type ClientMessage =
   | JoinMessage
   | ReadyMessage
+  | ColorMessage
+  | StartMessage
   | InputMessage
   | RematchMessage
   | LeaveMessage
@@ -76,7 +89,8 @@ export interface WelcomeMessage {
   t: "welcome";
   v: number;
   playerId: string;
-  slot: 0 | 1;
+  slot: SlotIndex;
+  host: boolean;
   config: RoomConfigWire;
   serverTick: number;
   token: string;
@@ -104,6 +118,9 @@ export interface StateMessage {
   t: "state";
   phase: RoomPhase;
   you: number | null;
+  /** Lowest connected slot; null when nobody is connected. */
+  host: number | null;
+  /** First other occupied slot, kept for older clients. */
   opponent: SlotWire | null;
   slots: SlotWire[];
   reason?: RoundEndReason;
@@ -111,7 +128,8 @@ export interface StateMessage {
 
 export interface RoundEndMessage {
   t: "roundEnd";
-  scores: [number, number];
+  /** Active-player scores, aligned with the last snapshot's players. */
+  scores: number[];
   winner: number | null;
   reason: RoundEndReason;
 }
@@ -138,6 +156,9 @@ export type ErrorCode =
   | "too_large"
   | "rate_limited"
   | "not_joined"
+  | "not_host"
+  | "not_enough_players"
+  | "not_ready"
   | "protocol";
 
 export type ServerMessage =
@@ -235,6 +256,12 @@ export function parseClientMessage(raw: string): ParseResult {
       if (!isValidPalette(msg.palette)) return { ok: false, code: "bad_palette" };
       return { ok: true, msg: { t: "ready", palette: msg.palette } };
     }
+    case "color": {
+      if (!isValidPalette(msg.palette)) return { ok: false, code: "bad_palette" };
+      return { ok: true, msg: { t: "color", palette: msg.palette } };
+    }
+    case "start":
+      return { ok: true, msg: { t: "start" } };
     case "input": {
       if (!isInt(msg.seq, 0, 2 ** 31) || !isInt(msg.tick, 0, 2 ** 31)) {
         return { ok: false, code: "protocol" };

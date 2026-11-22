@@ -25,10 +25,12 @@ import {
   PLAYFIELD_BOTTOM,
   PLAYFIELD_TOP,
   ROUND_TICKS,
+  SLOT_INDICES,
   iconMargin,
   type GameEvent,
   type MatchPhase,
   type PlayerSnapshot,
+  type SlotIndex,
   type Snapshot,
 } from "@flash/core";
 import { FONT_FAMILY, paletteColor } from "../config";
@@ -53,7 +55,10 @@ interface DisplayPlayer {
   name: string;
 }
 
-const PLAYER_NAMES = ["Player_A", "Player_B"];
+const PLAYER_NAMES = ["Player_A", "Player_B", "Player_C", "Player_D"];
+const COUNTDOWN_SFX = ["s_3", "s_2", "s_1", "s_go"] as const;
+/** Wait for half a second of real server progress before showing numbers. */
+const COUNTDOWN_GATE_TICKS = 30;
 
 export class SceneRenderer {
   private readonly app: Application;
@@ -63,50 +68,39 @@ export class SceneRenderer {
   private readonly paint: PaintLayer;
   private readonly effects: EffectsManager;
   private readonly prize: PrizeView;
-  private readonly players: [PlayerView, PlayerView];
+  private readonly players: PlayerView[];
   private readonly hud: Hud;
   private readonly countdown: Text;
-  private readonly displays: [DisplayPlayer, DisplayPlayer] = [
-    {
-      x: 640,
-      y: 540,
-      angle: 180,
-      targetX: 640,
-      targetY: 540,
-      targetAngle: 180,
-      jumpElapsed: 0,
-      squashElapsed: 0,
-      bandiStarted: null,
-      name: PLAYER_NAMES[0]!,
-    },
-    {
-      x: 1280,
-      y: 540,
-      angle: 0,
-      targetX: 1280,
-      targetY: 540,
-      targetAngle: 0,
-      jumpElapsed: 0,
-      squashElapsed: 0,
-      bandiStarted: null,
-      name: PLAYER_NAMES[1]!,
-    },
-  ];
+  private readonly displays: DisplayPlayer[] = SLOT_INDICES.map((slot) => ({
+    x: 960,
+    y: 540,
+    angle: 0,
+    targetX: 960,
+    targetY: 540,
+    targetAngle: 0,
+    jumpElapsed: 0,
+    squashElapsed: 0,
+    bandiStarted: null,
+    name: PLAYER_NAMES[slot]!,
+  }));
 
   private snapshot: Snapshot | null = null;
   private lastPhase: MatchPhase | null = null;
   private hasSnapshot = false;
   private totalTicks = ROUND_TICKS;
-  private names: [string, string] = ["Player A", "Player B"];
-  private palettes: [number, number] = [2, 0];
-  private ownSlot: 0 | 1 | null = null;
-  private activeSlots: 1 | 2 = 2;
+  private names: string[] = ["Player A", "Player B", "Player C", "Player D"];
+  private palettes: number[] = [2, 0, 1, 3];
+  private ownSlot: number | null = null;
+  private activeSlots = new Set<number>([0, 1]);
   private gameVisible = false;
   private ownInputLeft = false;
   private ownInputRight = false;
+  private pointer = { x: 0, y: 0, active: false };
   private predictedAngle = 180;
   private countdownAge = 0;
   private countdownLabel = -1;
+  private countdownGateTick = -1;
+  private countdownCounting = false;
   private readonly pendingPaint: Array<{
     x: number;
     y: number;
@@ -128,6 +122,8 @@ export class SceneRenderer {
     this.players = [
       new PlayerView(assets.brushes, 2),
       new PlayerView(assets.brushes, 0),
+      new PlayerView(assets.brushes, 1),
+      new PlayerView(assets.brushes, 3),
     ];
 
     this.countdown = new Text({
@@ -171,6 +167,8 @@ export class SceneRenderer {
       this.countdown,
     );
     app.stage.addChild(this.world);
+    app.canvas.addEventListener("pointermove", this.onPointerMove);
+    app.canvas.addEventListener("pointerleave", this.onPointerLeave);
     this.setGameVisible(false);
     this.resize();
     app.renderer.on("resize", () => this.resize());
@@ -186,15 +184,21 @@ export class SceneRenderer {
     );
   }
 
-  setPlayers(names: [string, string], palettes: [number, number], ownSlot: 0 | 1 | null): void {
-    this.names = names;
-    this.palettes = palettes;
+  setPlayers(names: readonly string[], palettes: readonly number[], ownSlot: number | null): void {
+    this.names = SLOT_INDICES.map((slot) => names[slot] ?? `Player ${slot + 1}`);
+    this.palettes = SLOT_INDICES.map((slot) => palettes[slot] ?? 0);
     this.ownSlot = ownSlot;
+    for (let slot = 0; slot < this.displays.length; slot += 1) {
+      this.displays[slot]!.name = PLAYER_NAMES[slot]!;
+    }
   }
 
-  setActiveSlots(count: 1 | 2): void {
-    this.activeSlots = count;
-    this.players[1].container.visible = this.gameVisible && count === 2;
+  setActiveSlots(slots: readonly number[]): void {
+    this.activeSlots = new Set(slots);
+    for (let slot = 0; slot < this.players.length; slot += 1) {
+      this.players[slot]!.container.visible =
+        this.gameVisible && this.activeSlots.has(slot);
+    }
   }
 
   /** Hide brushes/prizes/paint while a DOM menu is in front of the arena. */
@@ -204,14 +208,57 @@ export class SceneRenderer {
     this.effects.container.visible = visible;
     this.effects.labels.visible = visible;
     this.prize.container.visible = visible;
-    this.players[0].container.visible = visible;
-    this.players[1].container.visible = visible && this.activeSlots === 2;
-    if (!visible) this.countdown.visible = false;
+    for (let slot = 0; slot < this.players.length; slot += 1) {
+      this.players[slot]!.container.visible = visible && this.activeSlots.has(slot);
+    }
+    if (!visible) {
+      this.audio.stopCountdown();
+      this.countdown.visible = false;
+    }
   }
 
   setLocalInput(left: boolean, right: boolean): void {
     this.ownInputLeft = left;
     this.ownInputRight = right;
+  }
+
+  private onPointerMove = (event: PointerEvent): void => {
+    const rect = this.app.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const screenX =
+      ((event.clientX - rect.left) / rect.width) * this.app.renderer.screen.width;
+    const screenY =
+      ((event.clientY - rect.top) / rect.height) * this.app.renderer.screen.height;
+    const scale = this.world.scale.x || 1;
+    this.pointer = {
+      x: (screenX - this.world.x) / scale,
+      y: (screenY - this.world.y) / scale,
+      active: true,
+    };
+  };
+
+  private onPointerLeave = (): void => {
+    this.pointer.active = false;
+  };
+
+  /**
+   * Mouse steering: turn toward the cursor with the same left/right inputs as
+   * the arrow keys, so the brush rotates at the normal simulated speed.
+   */
+  pointerIntent(): { left: boolean; right: boolean } {
+    const neutral = { left: false, right: false };
+    if (!this.pointer.active || this.ownSlot === null) return neutral;
+    const display = this.displays[this.ownSlot];
+    if (!display) return neutral;
+    const dx = this.pointer.x - display.x;
+    const dy = this.pointer.y - display.y;
+    if (Math.hypot(dx, dy) < 8) return neutral;
+    const desired = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const delta = ((desired - this.predictedAngle + 540) % 360) - 180;
+    if (Math.abs(delta) <= 4) return neutral;
+    return delta > 0
+      ? { left: false, right: true }
+      : { left: true, right: false };
   }
 
   /** Keep the top HUD bar visible on countdown and results too. */
@@ -229,8 +276,12 @@ export class SceneRenderer {
     this.pendingPaint.length = 0;
     this.prize.update(null, 0, 0);
     this.hasSnapshot = false;
+    this.audio.stopCountdown();
     this.countdown.visible = false;
     this.countdownLabel = -1;
+    this.countdownAge = 0;
+    this.countdownGateTick = -1;
+    this.countdownCounting = false;
     for (const display of this.displays) display.bandiStarted = null;
   }
 
@@ -256,10 +307,9 @@ export class SceneRenderer {
     }
 
     const now = performance.now() / 1000;
-    const snapshots: [PlayerSnapshot, PlayerSnapshot] = [snapshot.a, snapshot.b];
-    for (let slot = 0; slot < this.activeSlots; slot += 1) {
-      const source = snapshots[slot]!;
-      const display = this.displays[slot]!;
+    this.setActiveSlots(snapshot.players.map((player) => player.slot));
+    for (const source of snapshot.players) {
+      const display = this.displays[source.slot]!;
       const distance = Math.hypot(source.x - display.targetX, source.y - display.targetY);
       display.targetX = source.x;
       display.targetY = source.y;
@@ -279,24 +329,62 @@ export class SceneRenderer {
     }
 
     if (first && this.ownSlot !== null) {
-      this.predictedAngle = snapshots[this.ownSlot]!.ang;
+      const own = snapshot.players.find((player) => player.slot === this.ownSlot);
+      if (own) this.predictedAngle = own.ang;
     }
 
     if (snapshot.phase === "countdown") {
-      this.showCountdown(snapshot.cd ?? 0);
+      if (!this.countdownCounting) {
+        if (this.countdownGateTick < 0) {
+          this.countdownGateTick = snapshot.tick;
+        } else if (snapshot.tick - this.countdownGateTick >= COUNTDOWN_GATE_TICKS) {
+          this.countdownCounting = true;
+          this.showCountdown(snapshot.cd ?? 0);
+        } else {
+          this.showCountdownWait();
+        }
+      } else {
+        this.showCountdown(snapshot.cd ?? 0);
+      }
     } else {
+      if (this.countdown.visible) this.audio.stopCountdown();
       this.countdown.visible = false;
+      this.countdownCounting = false;
+      this.countdownGateTick = -1;
     }
   }
 
   private showCountdown(label: number): void {
-    if (this.countdownLabel === label) return;
+    if (label !== this.countdownLabel) this.setCountdownLabel(label);
+  }
+
+  /** Shows "Ready!" until the server's countdown is visibly progressing. */
+  beginCountdownWait(): void {
+    this.countdownGateTick = -1;
+    this.countdownCounting = false;
+    this.showCountdownWait();
+  }
+
+  private showCountdownWait(): void {
+    if (this.countdownLabel !== -1) {
+      this.countdownLabel = -1;
+      this.countdownAge = 0;
+      this.countdown.alpha = 1;
+      this.countdown.scale.set(1);
+    }
+    this.countdown.text = "Ready!";
+    this.countdown.visible = true;
+  }
+
+  private setCountdownLabel(label: number): void {
     this.countdownLabel = label;
     this.countdownAge = 0;
     this.countdown.text = COUNTDOWN_LABELS[label] ?? "Go!";
     this.countdown.visible = true;
     this.countdown.alpha = 1;
     this.countdown.scale.set(1);
+    const sound = COUNTDOWN_SFX[label];
+    if (sound) this.audio.playCountdown(sound);
   }
 
   handleEvent(event: GameEvent): void {
@@ -344,21 +432,15 @@ export class SceneRenderer {
         this.audio.play("plop");
         break;
       case "count":
-        this.playCount(event.label);
         break;
       case "end":
+        this.audio.stopCountdown();
         this.countdown.visible = false;
         this.pendingPaint.length = 0;
         break;
     }
   }
 
-  private playCount(label: string): void {
-    if (label === "3") this.audio.play("s_3");
-    else if (label === "2") this.audio.play("s_2");
-    else if (label === "1") this.audio.play("s_1");
-    else this.audio.play("s_go");
-  }
 
   private flushPendingPaint(dt: number): void {
     for (let index = this.pendingPaint.length - 1; index >= 0; index -= 1) {
@@ -377,10 +459,9 @@ export class SceneRenderer {
     }
     this.flushPendingPaint(dt);
     const now = performance.now() / 1000;
-    const sources: [PlayerSnapshot, PlayerSnapshot] = [snapshot.a, snapshot.b];
 
-    for (let slot = 0; slot < this.activeSlots; slot += 1) {
-      const source = sources[slot]!;
+    for (const source of snapshot.players) {
+      const slot = source.slot;
       const display = this.displays[slot]!;
       const local = this.ownSlot === slot;
       if (
@@ -438,15 +519,14 @@ export class SceneRenderer {
     // Stamp the cosmetic paint layer every rendered frame from the displayed
     // (predicted/interpolated) positions, not from 20 Hz snapshots. This keeps
     // the stroke growing at 60 fps exactly like the local pygame build.
-    const paintActive =
-      snapshot.paint &&
-      (snapshot.phase === "countdown" || snapshot.phase === "playing");
-    for (let slot = 0; slot < this.activeSlots; slot += 1) {
-      const source = sources[slot]!;
+    const paintPhase =
+      snapshot.phase === "countdown" || snapshot.phase === "playing";
+    for (const source of snapshot.players) {
+      const slot = source.slot;
       const display = this.displays[slot]!;
       const name = PLAYER_NAMES[slot]!;
       const color = paletteColor(source.c);
-      if (paintActive && (source.fl & FLAG_KNOCKBACK) === 0) {
+      if (paintPhase && source.pt && (source.fl & FLAG_KNOCKBACK) === 0) {
         this.paint.stampTrail(name, display.x, display.y, source.r, color);
       } else {
         this.paint.snap(name, display.x, display.y, source.r, color);
@@ -458,19 +538,21 @@ export class SceneRenderer {
       this.ownSlot !== null &&
       (snapshot.phase === "playing" || snapshot.phase === "countdown")
     ) {
-      const source = sources[this.ownSlot]!;
-      const modeAngle = source.m === 0 ? 0 : 6;
-      const factor = (dt * 1000) / 35;
-      if (this.ownInputRight) this.predictedAngle += modeAngle * factor;
-      else if (this.ownInputLeft) this.predictedAngle -= modeAngle * factor;
-      let delta = ((source.ang - this.predictedAngle + 540) % 360) - 180;
-      if (Math.abs(delta) > 10) this.predictedAngle = source.ang;
-      else this.predictedAngle += delta * Math.min(1, dt * 6);
+      const source = snapshot.players.find((player) => player.slot === this.ownSlot);
+      if (source) {
+        const modeAngle = source.m === 0 ? 0 : 6;
+        const factor = (dt * 1000) / 35;
+        if (this.ownInputRight) this.predictedAngle += modeAngle * factor;
+        else if (this.ownInputLeft) this.predictedAngle -= modeAngle * factor;
+        let delta = ((source.ang - this.predictedAngle + 540) % 360) - 180;
+        if (Math.abs(delta) > 10) this.predictedAngle = source.ang;
+        else this.predictedAngle += delta * Math.min(1, dt * 6);
+      }
     }
 
     const observe: ObserveState[] = [];
-    for (let slot = 0; slot < this.activeSlots; slot += 1) {
-      const source = sources[slot]!;
+    for (const source of snapshot.players) {
+      const slot = source.slot;
       const display = this.displays[slot]!;
       const jumpProgress = Math.min(1, display.jumpElapsed / 1.4);
       const lift = (source.fl & FLAG_JUMPING) !== 0 ? Math.sin(Math.PI * jumpProgress) * 110 : 0;
@@ -545,15 +627,12 @@ export class SceneRenderer {
       dt,
     );
 
-    if (this.countdown.visible) {
+    if (this.countdown.visible && snapshot.phase === "countdown") {
       this.countdownAge += dt;
       const progress = Math.min(1, this.countdownAge / 0.9);
       const pop = 1 + 0.18 * Math.sin(progress * Math.PI);
       this.countdown.scale.set(pop * (1.15 - 0.15 * progress));
-      this.countdown.alpha = progress > 0.85 ? Math.max(0, 1 - (progress - 0.85) / 0.15) : 1;
-      if (this.countdownAge > 0.95) {
-        this.countdown.visible = false;
-      }
+      this.countdown.alpha = 1;
     }
 
   }

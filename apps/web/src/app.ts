@@ -1,5 +1,5 @@
 import { Application } from "pixi.js";
-import type { Snapshot } from "@flash/core";
+import type { SlotIndex, Snapshot } from "@flash/core";
 import type { RoundEndMessage, StateMessage, WelcomeMessage } from "@flash/protocol";
 import { AudioManager } from "./audio/audio";
 import {
@@ -40,19 +40,33 @@ export class FlashApp {
   private palette = 2;
   private ownPalette = 2;
   private room: string | null = null;
-  private ownSlot: 0 | 1 | null = null;
+  private ownSlot: SlotIndex | null = null;
   private onlineState: StateMessage | null = null;
   private latestSnapshot: Snapshot | null = null;
   private result: RoundEndMessage | OfflineRoundEnd | null = null;
   private latency: number | null = null;
   private connection: ConnectionStatus = "closed";
   private paused = false;
+  private mouseControl = true;
   private inputBlocked = true;
   private lastErrorAt = 0;
   private installing = false;
   private resultToken = 0;
   private pauseButtons: HTMLButtonElement[] = [];
   private pauseIndex = 0;
+  private lobbyKey: string | null = null;
+  private lobbyRows: Array<{
+    root: HTMLElement;
+    dot: HTMLElement;
+    name: HTMLElement;
+    state: HTMLElement;
+  }> = [];
+  private lobbySwatches: HTMLElement | null = null;
+  private lobbyChosen = 2;
+  private lobbyReady: HTMLButtonElement | null = null;
+  private lobbyStart: HTMLButtonElement | null = null;
+  private lobbyWait: HTMLElement | null = null;
+  private lobbyHint: HTMLElement | null = null;
 
   async start(): Promise<void> {
     registerServiceWorker();
@@ -225,17 +239,7 @@ export class FlashApp {
     nameInput.maxLength = 16;
     nameInput.value = this.playerName;
     nameLabel.append(nameInput);
-
-    const paletteLabel = el("label", undefined, "Your palette");
-    let chosen = this.palette;
-    const paletteRow = swatches(null, chosen, (index) => {
-      chosen = index;
-      this.palette = index;
-      this.savePreferences();
-      updateSwatchRow(paletteRow, index);
-    });
-    paletteLabel.append(paletteRow);
-    left.append(nameLabel, paletteLabel);
+    left.append(nameLabel, el("p", "tiny", "Pick your color inside the room."));
 
     const right = el("div", "grid");
     const hostPanel = el("div", "panel grid");
@@ -244,7 +248,6 @@ export class FlashApp {
       el("p", "tiny", "You get a code and a link. Your friend joins with it."),
       button("Create room", () => {
         this.playerName = nameInput.value.trim() || DEFAULT_NAME;
-        this.palette = chosen;
         this.savePreferences();
         void this.createRoom();
       }, { className: "primary" }),
@@ -261,7 +264,6 @@ export class FlashApp {
       codeInput,
       button("Join", () => {
         this.playerName = nameInput.value.trim() || DEFAULT_NAME;
-        this.palette = chosen;
         this.savePreferences();
         const code = codeInput.value.trim().toUpperCase();
         if (!ROOM_RE.test(code)) {
@@ -348,39 +350,37 @@ export class FlashApp {
   }
 
   private onlineOrder(): {
-    self: StateMessage["slots"][number] | null;
-    opponent: StateMessage["opponent"];
-    names: [string, string];
-    palettes: [number, number];
+    names: string[];
+    palettes: number[];
+    slots: number[];
   } {
     const state = this.onlineState;
-    const self = state?.slots.find((slot) => slot.slot === state.you) ?? null;
-    const opponent = state?.opponent ?? null;
-    const selfName = self?.name ?? this.playerName;
-    const oppName = opponent?.name ?? "Waiting…";
-    const selfPalette = self?.palette ?? this.palette;
-    const oppPalette = opponent?.palette ?? (selfPalette === 0 ? 1 : 0);
-    const you = state?.you ?? this.ownSlot ?? 0;
-    return {
-      self,
-      opponent,
-      names: you === 0 ? [selfName, oppName] : [oppName, selfName],
-      palettes: you === 0 ? [selfPalette, oppPalette] : [oppPalette, selfPalette],
-    };
+    const names: string[] = [];
+    const palettes: number[] = [];
+    const slots: number[] = [];
+    for (const index of [0, 1, 2, 3] as const) {
+      const wire = state?.slots.find((slot) => slot.slot === index) ?? null;
+      names[index] = wire?.name ?? `Player ${index + 1}`;
+      palettes[index] = wire?.palette ?? [2, 0, 1, 3][index]!;
+      if (wire) slots.push(index);
+    }
+    return { names, palettes, slots };
   }
 
   private onOnlineState(state: StateMessage): void {
     this.onlineState = state;
     const order = this.onlineOrder();
     this.renderer.setPlayers(order.names, order.palettes, this.ownSlot);
-    this.renderer.setActiveSlots(2);
+    this.renderer.setActiveSlots(order.slots);
     this.updateChip();
-    if (
-      state.opponent &&
-      !state.opponent.connected &&
-      (state.phase === "countdown" || state.phase === "playing")
-    ) {
-      toast("Opponent disconnected — 20 s to reconnect.", 3200);
+
+    const disconnected = state.slots.find(
+      (slot) =>
+        !slot.connected &&
+        (state.phase === "countdown" || state.phase === "playing"),
+    );
+    if (disconnected) {
+      toast(`${disconnected.name} disconnected — 20 s to reconnect.`, 3200);
     }
 
     if (state.phase === "lobby") {
@@ -388,7 +388,10 @@ export class FlashApp {
       return;
     }
     if (state.phase === "countdown" || state.phase === "playing") {
-      if (this.screen !== "game") this.showGameChrome();
+      if (this.screen !== "game") {
+        this.showGameChrome();
+        if (state.phase === "countdown") this.renderer.beginCountdownWait();
+      }
       if (state.phase === "playing") {
         if (this.audio.musicEnabled) this.audio.startMusic();
       } else {
@@ -433,8 +436,18 @@ export class FlashApp {
   private showLobby(state: StateMessage): void {
     this.setScreen("lobby");
     this.audio.stopMusic();
-    clear(this.ui);
     const room = this.room ?? "";
+    const canSync =
+      this.lobbyKey === room &&
+      this.lobbyRows.length === 4 &&
+      this.lobbyRows.every((row) => this.ui.contains(row.root));
+    if (!canSync) this.buildLobby(room);
+    this.syncLobby(state);
+  }
+
+  private buildLobby(room: string): void {
+    clear(this.ui);
+    this.lobbyKey = room;
     const screen = el("div", "screen classic-page");
     const header = el("div", "row between");
     header.append(el("h2", undefined, "Room"), el("span", "badge", "waiting"));
@@ -459,85 +472,124 @@ export class FlashApp {
     );
     screen.append(actions);
 
-    const self = state.slots.find((slot) => slot.slot === state.you) ?? null;
-    const opponent = state.opponent;
     const slots = el("div", "slot-list");
-    slots.append(
-      this.slotRow(
-        self?.name ?? this.playerName,
-        self?.palette ?? this.palette,
-        "you",
-        self?.ready ?? false,
-        self?.connected ?? true,
-      ),
-      opponent
-        ? this.slotRow(
-            opponent.name,
-            opponent.palette,
-            opponent.ready ? "ready" : "not ready",
-            opponent.ready,
-            opponent.connected,
-          )
-        : this.slotRow("Waiting for a challenger…", 1, "empty", false, true),
-    );
-    screen.append(el("h3", undefined, "Players"), slots);
+    this.lobbyRows = [];
+    for (let index = 0; index < 4; index += 1) {
+      const row = this.createSlotRow();
+      this.lobbyRows.push(row);
+      slots.append(row.root);
+    }
+    screen.append(el("h3", undefined, "Players (2–4)"), slots);
 
     const paletteBlock = el("div", "panel grid");
     paletteBlock.style.marginTop = "16px";
-    paletteBlock.append(el("h3", undefined, "Your palette"));
-    const taken = opponent?.palette ?? null;
-    let chosen = self?.palette ?? this.palette;
-    const row = swatches(taken, chosen, (index) => {
-      chosen = index;
+    paletteBlock.append(el("h3", undefined, "Your color"));
+    this.lobbyChosen = this.palette;
+    this.lobbySwatches = swatches(null, this.lobbyChosen, (index) => {
+      this.lobbyChosen = index;
       this.palette = index;
       this.savePreferences();
-      updateSwatchRow(row, index);
+      if (this.lobbySwatches) updateSwatchRow(this.lobbySwatches, index);
+      this.online?.color(index);
     });
-    paletteBlock.append(row);
+    paletteBlock.append(this.lobbySwatches);
     screen.append(paletteBlock);
 
     const footer = el("div", "row between");
     footer.style.marginTop = "18px";
+    this.lobbyReady = button("I'm ready", () => {
+      this.online?.ready(this.lobbyChosen);
+    }, { className: "primary" });
+    this.lobbyStart = button("Start game", () => this.online?.start(), {
+      className: "primary",
+    });
+    this.lobbyWait = el("p", "tiny", "Waiting for the host to start…");
     footer.append(
-      button(self?.ready ? "Ready!" : "I'm ready", () => {
-        this.online?.ready(chosen);
-      }, { className: "primary", disabled: self?.ready ?? false }),
+      this.lobbyReady,
+      this.lobbyStart,
+      this.lobbyWait,
       button("Leave room", () => {
         this.leaveOnline();
         this.showMenu();
       }, { className: "ghost" }),
     );
     screen.append(footer);
-    screen.append(
-      el(
-        "p",
-        "tiny",
-        opponent?.ready && self?.ready
-          ? "Both ready — starting…"
-          : "The match starts automatically when both players are ready.",
-      ),
-    );
+    this.lobbyHint = el("p", "tiny", "");
+    screen.append(this.lobbyHint);
     this.ui.append(screen);
   }
 
-  private slotRow(
-    name: string,
-    palette: number,
-    status: string,
-    ready: boolean,
-    connected: boolean,
-  ): HTMLElement {
-    const row = el("div", "slot");
+  private syncLobby(state: StateMessage): void {
+    const self = state.slots.find((slot) => slot.slot === state.you) ?? null;
+    if (self) this.lobbyChosen = self.palette;
+
+    for (let index = 0; index < this.lobbyRows.length; index += 1) {
+      const row = this.lobbyRows[index]!;
+      const wire = state.slots.find((slot) => slot.slot === index) ?? null;
+      if (!wire) {
+        row.dot.style.background = "transparent";
+        row.dot.style.border = "2px dashed rgba(74, 39, 11, 0.45)";
+        row.dot.style.boxShadow = "none";
+        row.name.textContent = "Open slot";
+        row.state.textContent = "empty";
+        continue;
+      }
+      row.dot.style.background = paletteCss(wire.palette);
+      row.dot.style.border = "none";
+      row.dot.style.boxShadow = "";
+      row.name.textContent = wire.name;
+      row.state.textContent = !wire.connected
+        ? "reconnecting"
+        : wire.ready
+          ? "ready"
+          : wire.slot === state.you
+            ? "you"
+            : "not ready";
+    }
+
+    const taken = state.slots
+      .filter((slot) => slot.slot !== state.you)
+      .map((slot) => slot.palette);
+    if (this.lobbySwatches) {
+      syncSwatchRow(this.lobbySwatches, taken, this.lobbyChosen);
+    }
+
+    const connected = state.slots.filter((slot) => slot.connected);
+    const allReady =
+      connected.length >= 2 && connected.every((slot) => slot.ready);
+    const isHost = state.host !== null && state.you === state.host;
+
+    if (this.lobbyReady) {
+      const label = this.lobbyReady.firstElementChild;
+      if (label) label.textContent = self?.ready ? "Ready!" : "I'm ready";
+      this.lobbyReady.disabled = self?.ready ?? false;
+    }
+    if (this.lobbyStart) {
+      this.lobbyStart.hidden = !isHost;
+      this.lobbyStart.disabled = !allReady;
+    }
+    this.lobbyWait?.toggleAttribute("hidden", isHost);
+    if (this.lobbyHint) {
+      this.lobbyHint.textContent = allReady
+        ? isHost
+          ? "Everyone is ready — start when you are."
+          : "Everyone is ready — waiting for the host."
+        : "Everyone in the room must be ready before the host can start.";
+    }
+  }
+
+  private createSlotRow(): {
+    root: HTMLElement;
+    dot: HTMLElement;
+    name: HTMLElement;
+    state: HTMLElement;
+  } {
+    const root = el("div", "slot");
     const dot = el("span", "dot");
-    dot.style.background = paletteCss(palette);
-    const label = el("span", "name", name);
-    const state = el(
-      "span",
-      "state",
-      !connected ? "reconnecting" : ready ? "ready" : status,
-    );
-    row.append(dot, label, state);
-    return row;
+    const name = el("span", "name");
+    const state = el("span", "state");
+    root.append(dot, name, state);
+    return { root, dot, name, state };
   }
 
   private showGameChrome(): void {
@@ -572,7 +624,7 @@ export class FlashApp {
     const card = el("div", "overlay-card");
     card.append(
       el("h2", undefined, "Leave the match?"),
-      el("p", "subtitle", "The round keeps running without you. Your opponent can win by forfeit."),
+      el("p", "subtitle", "The round keeps running without you. The remaining players can win by forfeit."),
     );
     const row = el("div", "row");
     row.style.justifyContent = "center";
@@ -591,40 +643,80 @@ export class FlashApp {
     this.ui.append(veil);
   }
 
+  private resultPlayers(): Array<{
+    slot: number;
+    name: string;
+    palette: number;
+    score: number;
+  }> {
+    const snapshot = this.latestSnapshot;
+    const scores = this.result?.scores ?? snapshot?.scores ?? [];
+    if (snapshot && snapshot.players.length > 0) {
+      return snapshot.players.map((player, index) => {
+        const wire =
+          this.onlineState?.slots.find((slot) => slot.slot === player.slot) ??
+          null;
+        const fallbackPalette =
+          this.mode === "online"
+            ? ([2, 0, 1, 3][player.slot] ?? 0)
+            : (player.slot === 0 ? 2 : 0);
+        const fallbackName =
+          this.mode === "online"
+            ? `Player ${player.slot + 1}`
+            : `Player ${String.fromCharCode(65 + player.slot)}`;
+        return {
+          slot: player.slot,
+          name: wire?.name ?? fallbackName,
+          palette: wire?.palette ?? fallbackPalette,
+          score: scores[index] ?? 0,
+        };
+      });
+    }
+    return scores.map((score, index) => ({
+      slot: index,
+      name:
+        this.mode === "online"
+          ? `Player ${index + 1}`
+          : `Player ${String.fromCharCode(65 + index)}`,
+      palette: this.mode === "online" ? ([2, 0, 1, 3][index] ?? 0) : index === 0 ? 2 : 0,
+      score,
+    }));
+  }
+
   private showResult(): void {
     this.setScreen("result");
     this.audio.stopMusic();
     this.resultToken += 1;
     clear(this.ui);
-    const order = this.mode === "online" ? this.onlineOrder() : null;
-    const scores = this.result?.scores ?? this.latestSnapshot?.scores ?? [0, 0];
+    const players = this.resultPlayers();
+    const scores = players.map((player) => player.score);
     const winner = this.result?.winner ?? this.latestSnapshot?.win ?? null;
     const reason = this.result?.reason;
-    const palettes: [number, number] = order ? order.palettes : [2, 0];
 
     const veil = el("div", "pause-veil results-veil");
     const scroll = el("div", "scroll-panel result-scroll");
     const content = el("div", "result-content");
+    if (players.length > 2) content.classList.add("many");
     content.append(el("h2", "result-title", "Battle Results"));
 
     const rows = el("div", "result-rows");
     const values: HTMLElement[] = [];
     const trophies: HTMLImageElement[] = [];
-    for (const index of [0, 1] as const) {
+    for (const player of players) {
       const row = el("div", "result-row");
       const brush = el("img", "result-brush");
-      brush.src = this.brushIcon(palettes[index]!);
+      brush.src = this.brushIcon(player.palette);
       brush.alt = "";
       brush.draggable = false;
       const line = el("div", "result-line");
-      const label = el("span", "result-name", `Player ${index + 1} :`);
-      label.style.color = paletteCss(palettes[index]!);
+      const label = el("span", "result-name", `${player.name} :`);
+      label.style.color = paletteCss(player.palette);
       const percent = el("span", "result-percent", "0%");
       values.push(percent);
       line.append(label, percent);
       const trophy = el("img", "result-trophy");
       trophy.src = `${ASSET_BASE}/icons/trophy.png`;
-      trophy.alt = winner === index ? "Winner" : "";
+      trophy.alt = winner === player.slot ? "Winner" : "";
       trophy.decoding = "async";
       trophies.push(trophy);
       row.append(brush, line, trophy);
@@ -636,7 +728,7 @@ export class FlashApp {
     const online = this.mode === "online";
     const rematch = button("Rematch", () => {
       rematch.disabled = true;
-      rematch.textContent = "Waiting for opponent…";
+      rematch.textContent = "Waiting for players…";
       if (online) this.online?.rematch();
       else this.offline?.rematch();
     }, { className: "primary" });
@@ -650,12 +742,21 @@ export class FlashApp {
     );
     content.append(actions);
     if (online && reason === "forfeit") {
-      content.append(el("p", "result-note", "A rematch needs both players present."));
+      content.append(el("p", "result-note", "A rematch needs every player present."));
     }
     scroll.append(content);
     veil.append(scroll);
     this.ui.append(veil);
-    this.playResultSequence(scores, rows, values, trophies, winner, actions);
+    const winnerRow = players.findIndex((player) => player.slot === winner);
+    this.playResultSequence(
+      players.length,
+      scores,
+      rows,
+      values,
+      trophies,
+      winnerRow >= 0 ? winnerRow : null,
+      actions,
+    );
   }
 
   private brushIcon(palette: number): string {
@@ -667,7 +768,8 @@ export class FlashApp {
    * cue, and finally the winner's trophy pops.
    */
   private playResultSequence(
-    scores: readonly [number, number],
+    count: number,
+    scores: readonly number[],
     rows: HTMLElement,
     values: readonly HTMLElement[],
     trophies: readonly HTMLImageElement[],
@@ -685,22 +787,24 @@ export class FlashApp {
     // The panel itself slides down from above the screen via CSS.
     this.audio.play("scoreTick");
 
-    const reveal = (index: 0 | 1, delay: number): void => {
+    const reveal = (index: number, delay: number): void => {
       at(delay, () => {
         rows.children.item(index)?.classList.add("shown");
         this.audio.play("scoreTick");
         this.countPercent(values[index]!, scores[index] ?? 0, 900, token);
       });
     };
-    reveal(0, 1700);
-    reveal(1, 3000);
+    for (let index = 0; index < count; index += 1) {
+      reveal(index, 1700 + index * 1300);
+    }
 
-    at(4400, () => {
+    const trophyAt = 1700 + count * 1300 + 100;
+    at(trophyAt, () => {
       this.audio.play("scoreTick");
       if (winner !== null) trophies[winner]?.classList.add("pop");
     });
 
-    at(5600, () => actions.classList.add("shown"));
+    at(trophyAt + 1200, () => actions.classList.add("shown"));
   }
 
   private countPercent(
@@ -737,7 +841,13 @@ export class FlashApp {
       toast("Updating to the latest version…");
       window.setTimeout(() => location.reload(), 700);
     } else if (code === "palette_taken") {
-      toast("That palette is taken. Pick another.");
+      toast("That color is taken. Pick another.");
+    } else if (code === "not_host") {
+      toast("Only the host can start the game.");
+    } else if (code === "not_enough_players") {
+      toast("At least two players are needed to start.");
+    } else if (code === "not_ready") {
+      toast("Everyone must be ready before the host starts.");
     } else if (code === "bad_name") {
       toast("Choose a display name (1–16 printable characters).");
     } else if (code === "too_large") {
@@ -774,8 +884,12 @@ export class FlashApp {
     const palettes: [number, number] = [2, 0];
     this.ownPalette = palettes[0];
     this.renderer.resetRound();
-    this.renderer.setActiveSlots(2);
-    this.renderer.setPlayers(["Player A", "Player B"], palettes, null);
+    this.renderer.setActiveSlots([0, 1]);
+    this.renderer.setPlayers(
+      ["Player A", "Player B", "Player C", "Player D"],
+      [palettes[0], palettes[1], 1, 3],
+      null,
+    );
     this.offline = new OfflineClient({ mode, palettes });
     this.offline.onSnapshot = (snapshot) => {
       this.latestSnapshot = snapshot;
@@ -882,11 +996,16 @@ export class FlashApp {
       return;
     }
     if (this.mode === "online" && this.online) {
-      const intent = this.input.own();
-      this.renderer.setLocalInput(intent.left, intent.right);
-      const active =
-        this.onlineState?.phase === "playing" || this.onlineState?.phase === "countdown";
-      if (active) this.online.updateInput(intent.left, intent.right);
+      const keyboard = this.input.own();
+      const mouse = this.mouseControl
+        ? this.renderer.pointerIntent()
+        : { left: false, right: false };
+      const left = keyboard.left || mouse.left;
+      const right = keyboard.right || mouse.right;
+      this.renderer.setLocalInput(left, right);
+      const phase = this.latestSnapshot?.phase ?? this.onlineState?.phase;
+      const active = phase === "playing" || phase === "countdown";
+      if (active) this.online.updateInput(left, right);
       else this.online.sendNeutral();
       return;
     }
@@ -897,6 +1016,17 @@ export class FlashApp {
   }
 
   private onGlobalKeyDown = (event: KeyboardEvent): void => {
+    if (
+      !event.repeat &&
+      (event.key === "p" || event.key === "P") &&
+      this.mode === "online" &&
+      this.screen === "game"
+    ) {
+      event.preventDefault();
+      this.mouseControl = !this.mouseControl;
+      toast(this.mouseControl ? "Mouse control on." : "Mouse control off.");
+      return;
+    }
     if (this.mode === "hotseat" && this.paused) {
       if (event.key === "ArrowUp") {
         event.preventDefault();
@@ -934,6 +1064,20 @@ function updateSwatchRow(row: HTMLElement, selected: number): void {
   const children = row.querySelectorAll(".swatch");
   children.forEach((child, index) => {
     child.setAttribute("aria-pressed", String(index === selected));
+  });
+}
+
+function syncSwatchRow(
+  row: HTMLElement,
+  taken: readonly number[],
+  selected: number,
+): void {
+  const takenSet = new Set(taken);
+  row.querySelectorAll<HTMLButtonElement>(".swatch").forEach((child, index) => {
+    const isTaken = takenSet.has(index);
+    child.setAttribute("aria-pressed", String(index === selected));
+    child.dataset.taken = String(isTaken);
+    child.disabled = isTaken;
   });
 }
 

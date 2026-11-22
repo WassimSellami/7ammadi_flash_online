@@ -62,6 +62,21 @@ describe("protocol validation", () => {
     });
   });
 
+  it("parses lobby colour changes and host starts", () => {
+    expect(parseClientMessage(JSON.stringify({ t: "color", palette: 1 }))).toEqual({
+      ok: true,
+      msg: { t: "color", palette: 1 },
+    });
+    expect(parseClientMessage(JSON.stringify({ t: "color", palette: 9 }))).toEqual({
+      ok: false,
+      code: "bad_palette",
+    });
+    expect(parseClientMessage(JSON.stringify({ t: "start" }))).toEqual({
+      ok: true,
+      msg: { t: "start" },
+    });
+  });
+
   it("rejects oversized payloads", () => {
     const result = parseClientMessage("x".repeat(MAX_MESSAGE_BYTES + 1));
     expect(result).toEqual({ ok: false, code: "too_large" });

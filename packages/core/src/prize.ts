@@ -25,6 +25,10 @@ import { stampCircle } from "./mask";
 import { applyBigBandi, clearPowerup, clampToPlayfield } from "./player";
 import type { GameEvent, PlayerState, PrizeState, SimState, Vec2 } from "./types";
 
+function activePlayers(sim: SimState): PlayerState[] {
+  return sim.activeSlots.map((slot) => sim.players[slot]!);
+}
+
 export function createPrizeState(): PrizeState {
   return {
     active: false,
@@ -82,7 +86,7 @@ function paintRainDrop(sim: SimState): void {
 
 /** `Prize.gen_pos`: 80 samples, fall back to the best of them. */
 export function generatePrizePosition(sim: SimState): Vec2 {
-  const [p1, p2] = sim.players;
+  const players = activePlayers(sim);
   const minDistanceSq = PRIZE_DIS * PRIZE_DIS;
   let best: Vec2 = {
     x: Math.floor(D_WIDTH / 2),
@@ -93,9 +97,10 @@ export function generatePrizePosition(sim: SimState): Vec2 {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const x = sim.rng.intInclusive(50, D_WIDTH - 50);
     const y = sim.rng.intInclusive(PLAYFIELD_TOP + 50, PLAYFIELD_BOTTOM - 50);
-    const d1 = (p1.y - y) ** 2 + (p1.x - x) ** 2;
-    const d2 = (p2.y - y) ** 2 + (p2.x - x) ** 2;
-    const closest = Math.min(d1, d2);
+    let closest = Number.POSITIVE_INFINITY;
+    for (const player of players) {
+      closest = Math.min(closest, (player.y - y) ** 2 + (player.x - x) ** 2);
+    }
     if (closest >= minDistanceSq) return { x, y };
     if (closest > bestDistanceSq) {
       bestDistanceSq = closest;
@@ -145,14 +150,14 @@ export function spawnPrize(sim: SimState, events: GameEvent[]): void {
 export function checkPrize(sim: SimState, events: GameEvent[]): void {
   const prize = sim.prize;
   if (!prize.active) return;
-  const [p1, p2] = sim.players;
+  const players = activePlayers(sim);
   const prizeCircle = { x: prize.x, y: prize.y, radius: P_RADIUS };
-  if (circleHit(prizeCircle, p1)) {
-    rewardPrize(sim, p1, p2, events);
+  for (const player of players) {
+    if (!circleHit(prizeCircle, player)) continue;
+    const other = players.find((candidate) => candidate !== player) ?? player;
+    rewardPrize(sim, player, other, events);
     prize.active = false;
-  } else if (circleHit(prizeCircle, p2)) {
-    rewardPrize(sim, p2, p1, events);
-    prize.active = false;
+    return;
   }
 }
 
@@ -219,7 +224,9 @@ export function rewardPrize(
     case "follow_me":
       events.push({ tick: sim.tick, type: "evil" });
       winner.paintIndex = winner.palette;
-      loser.paintIndex = winner.palette;
+      for (const other of activePlayers(sim)) {
+        if (other !== winner) other.paintIndex = winner.palette;
+      }
       if (winner.powerup === null && !winner.bandi) {
         winner.powerup = "follow_me";
       }

@@ -40,6 +40,9 @@ for (const client of clients) {
 clients[0].ws.send(JSON.stringify({ t: "ready", palette: 2 }));
 clients[1].ws.send(JSON.stringify({ t: "ready", palette: 0 }));
 
+await new Promise((resolve) => setTimeout(resolve, 300));
+clients[0].ws.send(JSON.stringify({ t: "start" }));
+
 const startedAt = Date.now();
 while (Date.now() - startedAt < 12_000) {
   const states = clients[0].messages.filter((m) => m.t === "state");

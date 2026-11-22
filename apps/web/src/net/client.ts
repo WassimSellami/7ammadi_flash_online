@@ -5,7 +5,7 @@
  * TTL is 250 ms). Presence heartbeat is a 1 Hz ping, snapshots arrive at 20 Hz.
  */
 
-import type { GameEvent, Snapshot } from "@flash/core";
+import type { GameEvent, SlotIndex, Snapshot } from "@flash/core";
 import {
   PROTOCOL_VERSION,
   type ClientMessage,
@@ -40,7 +40,7 @@ export class OnlineClient {
   private socket: WebSocket | null = null;
   private status: ConnectionStatus = "closed";
   private token: string | null;
-  private slot: 0 | 1 | null = null;
+  private slot: SlotIndex | null = null;
   private intentionalClose = false;
   private attempts = 0;
   private seq = 0;
@@ -57,7 +57,7 @@ export class OnlineClient {
     this.token = options.token ?? null;
   }
 
-  get playerSlot(): 0 | 1 | null {
+  get playerSlot(): SlotIndex | null {
     return this.slot;
   }
 
@@ -174,6 +174,14 @@ export class OnlineClient {
 
   ready(palette: number): void {
     this.send({ t: "ready", palette });
+  }
+
+  color(palette: number): void {
+    this.send({ t: "color", palette });
+  }
+
+  start(): void {
+    this.send({ t: "start" });
   }
 
   rematch(): void {

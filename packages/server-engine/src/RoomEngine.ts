@@ -10,9 +10,11 @@
 import {
   DEFAULT_PALETTE_A,
   DEFAULT_PALETTE_B,
+  MAX_PLAYERS,
   NEUTRAL_INPUT,
   PALETTE_COUNT,
   ROUND_TICKS,
+  SLOT_INDICES,
   TICK_MS,
   createSim,
   encodeMaskRle,
@@ -24,6 +26,7 @@ import {
   type RoundEndReason,
   type SimConfig,
   type SimState,
+  type SlotIndex,
   type Snapshot,
 } from "@flash/core";
 import {
@@ -39,7 +42,7 @@ export const DEFAULT_INPUT_TTL_TICKS = 15; // 250 ms
 export const DEFAULT_GRACE_TICKS = 1200; // 20 s
 
 export interface RoomSlot {
-  slot: 0 | 1;
+  slot: SlotIndex;
   playerId: string;
   token: string;
   name: string;
@@ -56,7 +59,7 @@ export interface RoomSlot {
 export interface JoinResultOk {
   ok: true;
   playerId: string;
-  slot: 0 | 1;
+  slot: SlotIndex;
   token: string;
   reconnected: boolean;
 }
@@ -68,10 +71,22 @@ export interface JoinResultError {
 
 export type JoinResult = JoinResultOk | JoinResultError;
 
+export interface StartResultOk {
+  ok: true;
+  started: boolean;
+}
+
+export interface StartResultError {
+  ok: false;
+  code: "not_joined" | "not_host" | "not_enough_players" | "not_ready";
+}
+
+export type StartResult = StartResultOk | StartResultError;
+
 export interface RoomOptions {
   code: string;
   /** Test seam: shorten rounds/countdown without touching rule constants. */
-  matchConfig?: Omit<SimConfig, "palettes" | "seed">;
+  matchConfig?: Omit<SimConfig, "palettes" | "seed" | "activeSlots" | "spawn">;
   inputTtlTicks?: number;
   graceTicks?: number;
   seedPrefix?: string;
@@ -103,7 +118,7 @@ export interface RoomMetrics {
 }
 
 export interface SlotRecord {
-  slot: 0 | 1;
+  slot: SlotIndex;
   name: string;
   token: string;
   palette: number;
@@ -114,12 +129,19 @@ export interface SlotRecord {
 export interface RoomRecord {
   code: string;
   matchNumber: number;
-  slots: [SlotRecord | null, SlotRecord | null];
+  slots: (SlotRecord | null)[];
 }
+
+const DEFAULT_SLOT_PALETTES: readonly number[] = [
+  DEFAULT_PALETTE_A,
+  DEFAULT_PALETTE_B,
+  1,
+  3,
+];
 
 export class RoomEngine {
   readonly code: string;
-  readonly slots: [RoomSlot | null, RoomSlot | null] = [null, null];
+  readonly slots: (RoomSlot | null)[] = SLOT_INDICES.map(() => null);
   phase: RoomPhase = "lobby";
   engineTick = 0;
   lastActivityTick = 0;
@@ -154,8 +176,27 @@ export class RoomEngine {
     return this.slots.filter((slot) => slot?.connected).length;
   }
 
-  get bothReady(): boolean {
-    return this.slots.every((slot) => slot !== null && slot.ready);
+  /** Lowest connected slot; the host starts the match. */
+  get hostSlot(): SlotIndex | null {
+    for (const slot of this.slots) {
+      if (slot?.connected) return slot.slot;
+    }
+    return null;
+  }
+
+  /** Host can start once two or more connected players are ready. */
+  get canStart(): boolean {
+    if (this.phase !== "lobby") return false;
+    const present = this.connectedSlots();
+    return (
+      present.length >= 2 && present.every((slot) => slot.ready)
+    );
+  }
+
+  private connectedSlots(): RoomSlot[] {
+    return this.slots.filter(
+      (slot): slot is RoomSlot => slot !== null && slot.connected,
+    );
   }
 
   configWire(): RoomConfigWire {
@@ -184,7 +225,6 @@ export class RoomEngine {
         this.stateChanged = true;
         this.forceSnapshot = true;
         this.pendingReason = "reconnect";
-        this.tryStart();
         return {
           ok: true,
           playerId: existing.playerId,
@@ -195,12 +235,10 @@ export class RoomEngine {
       }
     }
 
-    const slotIndex = this.slots[0] === null ? 0 : this.slots[1] === null ? 1 : -1;
-    if (slotIndex < 0) return { ok: false, code: "room_full" };
+    const slot = SLOT_INDICES.find((index) => this.slots[index] === null);
+    if (slot === undefined) return { ok: false, code: "room_full" };
 
-    const slot = slotIndex as 0 | 1;
-    const other = this.slots[slot === 0 ? 1 : 0];
-    const palette = this.defaultPalette(slot, other?.palette);
+    const palette = this.defaultPalette(slot);
     const player: RoomSlot = {
       slot,
       playerId: `${this.code}-${slot}`,
@@ -228,11 +266,16 @@ export class RoomEngine {
     };
   }
 
-  private defaultPalette(slot: 0 | 1, otherPalette: number | undefined): number {
-    const preferred = slot === 0 ? DEFAULT_PALETTE_A : DEFAULT_PALETTE_B;
-    if (otherPalette === undefined || preferred !== otherPalette) return preferred;
+  private defaultPalette(slot: SlotIndex): number {
+    const preferred = DEFAULT_SLOT_PALETTES[slot] ?? slot % PALETTE_COUNT;
+    const used = new Set(
+      this.slots
+        .filter((candidate): candidate is RoomSlot => candidate !== null && candidate.slot !== slot)
+        .map((candidate) => candidate.palette),
+    );
+    if (!used.has(preferred)) return preferred;
     for (let palette = 0; palette < PALETTE_COUNT; palette += 1) {
-      if (palette !== otherPalette) return palette;
+      if (!used.has(palette)) return palette;
     }
     return preferred;
   }
@@ -251,8 +294,10 @@ export class RoomEngine {
     const slot = this.findByPlayerId(playerId);
     if (!slot) return { ok: false, code: "not_joined" };
     if (this.phase !== "lobby") return { ok: true };
-    const other = this.slots[slot.slot === 0 ? 1 : 0];
-    if (other && other.palette === palette) {
+    const taken = this.slots.some(
+      (other) => other !== null && other.slot !== slot.slot && other.palette === palette,
+    );
+    if (taken) {
       return { ok: false, code: "palette_taken" };
     }
     this.touch();
@@ -260,8 +305,40 @@ export class RoomEngine {
     slot.ready = true;
     this.stateChanged = true;
     this.pendingReason = "ready";
-    this.tryStart();
     return { ok: true };
+  }
+
+  /** Lobby colour change that is broadcast immediately without readying up. */
+  color(playerId: string, palette: number): { ok: true } | { ok: false; code: "palette_taken" | "not_joined" } {
+    const slot = this.findByPlayerId(playerId);
+    if (!slot) return { ok: false, code: "not_joined" };
+    if (this.phase !== "lobby") return { ok: true };
+    const taken = this.slots.some(
+      (other) => other !== null && other.slot !== slot.slot && other.palette === palette,
+    );
+    if (taken) return { ok: false, code: "palette_taken" };
+    if (slot.palette === palette) return { ok: true };
+    this.touch();
+    slot.palette = palette;
+    this.stateChanged = true;
+    this.pendingReason = "ready";
+    return { ok: true };
+  }
+
+  /** Host-only start, allowed with any player count from 2 to 4. */
+  start(playerId: string): StartResult {
+    const slot = this.findByPlayerId(playerId);
+    if (!slot) return { ok: false, code: "not_joined" };
+    if (this.phase !== "lobby") return { ok: false, code: "not_ready" };
+    if (this.hostSlot !== slot.slot) return { ok: false, code: "not_host" };
+    const present = this.connectedSlots();
+    if (present.length < 2) return { ok: false, code: "not_enough_players" };
+    if (present.some((candidate) => !candidate.ready)) {
+      return { ok: false, code: "not_ready" };
+    }
+    this.touch();
+    this.startMatch();
+    return { ok: true, started: true };
   }
 
   input(
@@ -291,11 +368,10 @@ export class RoomEngine {
     this.rematchVotes.add(slot.slot);
     this.touch();
 
-    const required = this.slots
-      .filter((candidate): candidate is RoomSlot => candidate !== null && candidate.connected)
-      .map((candidate) => candidate.slot);
+    const required = this.connectedSlots().map((candidate) => candidate.slot);
     const started =
-      required.length === 2 && required.every((vote) => this.rematchVotes.has(vote));
+      required.length >= 2 &&
+      required.every((vote) => this.rematchVotes.has(vote));
     if (started) {
       this.startMatch();
     } else {
@@ -358,10 +434,9 @@ export class RoomEngine {
         reason = "phase";
         forceSnapshot = true;
       } else {
-        const inputs: [InputState, InputState] = [
-          this.effectiveInput(0),
-          this.effectiveInput(1),
-        ];
+        const inputs: InputState[] = SLOT_INDICES.map((slot) =>
+          this.effectiveInput(slot),
+        );
         events = stepSim(this.sim, inputs);
         this.phase = this.sim.phase;
         if (this.sim.phase === "result") {
@@ -403,7 +478,7 @@ export class RoomEngine {
     };
   }
 
-  private effectiveInput(slotIndex: 0 | 1): InputState {
+  private effectiveInput(slotIndex: number): InputState {
     const slot = this.slots[slotIndex];
     if (!slot || !slot.connected || !this.sim) return { ...NEUTRAL_INPUT };
     if (this.sim.tick - slot.lastInputTick > this.ttlTicks) return { ...NEUTRAL_INPUT };
@@ -414,39 +489,38 @@ export class RoomEngine {
     const present = this.slots.filter(
       (slot): slot is RoomSlot => slot !== null && slot.connected,
     );
-    if (present.length === 2) return null;
     const absent = this.slots.filter(
       (slot): slot is RoomSlot => slot !== null && !slot.connected,
     );
+    if (absent.length === 0) return null;
     for (const slot of absent) {
-      if (slot.disconnectTick === null) continue;
+      if (slot.disconnectTick === null) return null;
       if (this.engineTick - slot.disconnectTick < this.graceTicks) return null;
     }
-    if (absent.length === 0) return null;
     if (present.length === 0) return { reason: "abandoned", winner: null };
+    // Three or more players can keep playing after one disconnect.
+    if (present.length > 1) return null;
     return { reason: "forfeit", winner: present[0]!.slot };
   }
 
-  private tryStart(): void {
-    if (this.phase !== "lobby") return;
-    if (!this.slots[0] || !this.slots[1]) return;
-    if (!this.slots[0].ready || !this.slots[1].ready) return;
-    if (!this.slots[0].connected || !this.slots[1].connected) return;
-    this.startMatch();
-  }
-
   private startMatch(): void {
+    const active = this.connectedSlots();
     this.matchNumber += 1;
     this.metrics.matches += 1;
-    const [slot0, slot1] = this.slots as [RoomSlot, RoomSlot];
-    for (const slot of [slot0, slot1]) {
+    for (const slot of this.slots) {
+      if (!slot) continue;
       slot.input = { ...NEUTRAL_INPUT };
       slot.lastInputTick = 0;
       slot.lastInputSeq = -1;
     }
+    const palettes = this.slots.map(
+      (slot, index) => slot?.palette ?? DEFAULT_SLOT_PALETTES[index] ?? 0,
+    );
     this.sim = createSim({
-      palettes: [slot0.palette, slot1.palette],
-      seed: `${this.options.seedPrefix ?? this.code}|m${this.matchNumber}|${slot0.palette}|${slot1.palette}`,
+      palettes,
+      activeSlots: active.map((slot) => slot.slot),
+      spawn: "cross",
+      seed: `${this.options.seedPrefix ?? this.code}|m${this.matchNumber}|${palettes.join(",")}`,
       ...(this.options.matchConfig ?? {}),
     });
     this.phase = "countdown";
@@ -470,9 +544,12 @@ export class RoomEngine {
     };
   }
 
-  stateFor(slotIndex: 0 | 1): StateMessage {
-    const self = this.slots[slotIndex];
-    const other = this.slots[slotIndex === 0 ? 1 : 0];
+  stateFor(slotIndex: number): StateMessage {
+    const self = this.slots[slotIndex] ?? null;
+    const other = this.slots.find(
+      (candidate): candidate is RoomSlot =>
+        candidate !== null && candidate.slot !== slotIndex,
+    ) ?? null;
     const wire = (slot: RoomSlot | null): SlotWire | null =>
       slot
         ? {
@@ -488,8 +565,9 @@ export class RoomEngine {
       t: "state",
       phase: this.phase,
       you: self ? self.slot : null,
+      host: this.hostSlot,
       opponent: other ? wire(other) : null,
-      slots: [wire(this.slots[0]), wire(this.slots[1])].filter(
+      slots: SLOT_INDICES.map((index) => wire(this.slots[index]!)).filter(
         (value): value is SlotWire => value !== null,
       ),
       ...(reason ? { reason } : {}),
@@ -529,14 +607,14 @@ export class RoomEngine {
     return {
       code: this.code,
       matchNumber: this.matchNumber,
-      slots: [toRecord(this.slots[0]), toRecord(this.slots[1])],
+      slots: this.slots.map((slot) => toRecord(slot)),
     };
   }
 
   /**
    * Rebuilds a room from `serializeRecord`. Active matches do not survive a
    * restart (the plan persists lifecycle transitions only), so the room comes
-   * back in the lobby with both players disconnected and ready to reconnect.
+   * back in the lobby with every player disconnected and ready to reconnect.
    */
   static restore(record: RoomRecord, options: Omit<RoomOptions, "code"> = {}): RoomEngine {
     const engine = new RoomEngine({ ...options, code: record.code });

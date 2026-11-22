@@ -39,7 +39,7 @@ export interface NodeServerOptions {
   port?: number;
   host?: string;
   tickMs?: number;
-  matchConfig?: Omit<SimConfig, "palettes" | "seed">;
+  matchConfig?: Omit<SimConfig, "palettes" | "seed" | "activeSlots" | "spawn">;
   inputTtlTicks?: number;
   graceTicks?: number;
   idleTtlMs?: number;
@@ -56,7 +56,7 @@ export interface NodeServerHandle {
 interface ClientContext {
   room: RoomRuntime;
   playerId: string | null;
-  slot: 0 | 1 | null;
+  slot: 0 | 1 | 2 | 3 | null;
   messages: number;
   joinedAt: number;
 }
@@ -66,7 +66,7 @@ type ClientSocket = WebSocket & { ctx?: ClientContext };
 interface RoomRuntime {
   code: string;
   engine: RoomEngine;
-  sockets: Map<0 | 1, ClientSocket>;
+  sockets: Map<0 | 1 | 2 | 3, ClientSocket>;
   timeout: NodeJS.Timeout | null;
   nextTickAt: number;
   lastSeen: number;
@@ -141,7 +141,7 @@ export class RoomHub {
     return this.rooms.get(code) ?? this.createRoom(code);
   }
 
-  attach(room: RoomRuntime, slot: 0 | 1, socket: ClientSocket): void {
+  attach(room: RoomRuntime, slot: 0 | 1 | 2 | 3, socket: ClientSocket): void {
     const existing = room.sockets.get(slot);
     if (existing && existing !== socket) {
       // The replaced socket must not disconnect the freshly reconnected player.
@@ -153,7 +153,7 @@ export class RoomHub {
     this.ensureLoop(room);
   }
 
-  detach(room: RoomRuntime, slot: 0 | 1, socket: ClientSocket): void {
+  detach(room: RoomRuntime, slot: 0 | 1 | 2 | 3, socket: ClientSocket): void {
     if (room.sockets.get(slot) === socket) room.sockets.delete(slot);
     room.lastSeen = Date.now();
     if (room.sockets.size === 0 && (room.engine.phase === "lobby" || room.engine.phase === "result")) {
@@ -168,14 +168,17 @@ export class RoomHub {
       room.timeout = null;
       const now = performance.now();
       let catchUp = 0;
-      while (room.nextTickAt <= now && catchUp < 3) {
+      while (room.nextTickAt <= now && catchUp < 8) {
         const output = room.engine.tick();
         this.metrics.ticks += 1;
         this.dispatch(room, output);
         room.nextTickAt += this.tickMs;
         catchUp += 1;
       }
-      if (room.nextTickAt < now) room.nextTickAt = now;
+      // Catch up after a short stall; only drop time after a long pause.
+      if (room.nextTickAt < now && now - room.nextTickAt > 1000) {
+        room.nextTickAt = now - 1000;
+      }
       if (room.sockets.size === 0 && (room.engine.phase === "lobby" || room.engine.phase === "result")) {
         this.stopLoop(room);
         return;
@@ -416,6 +419,7 @@ function handleMessage(hub: RoomHub, socket: ClientSocket, data: RawData): void 
       v: PROTOCOL_VERSION,
       playerId: joined.playerId,
       slot: joined.slot,
+      host: engine.hostSlot === joined.slot,
       config: engine.configWire(),
       serverTick: engine.engineTick,
       token: joined.token,
@@ -438,6 +442,19 @@ function handleMessage(hub: RoomHub, socket: ClientSocket, data: RawData): void 
       const result = engine.ready(ctx.playerId, message.palette);
       if (!result.ok) hub.sendError(socket, result.code);
       hub.broadcastState(ctx.room);
+      break;
+    }
+    case "color": {
+      const result = engine.color(ctx.playerId, message.palette);
+      if (!result.ok) hub.sendError(socket, result.code);
+      hub.broadcastState(ctx.room);
+      break;
+    }
+    case "start": {
+      const result = engine.start(ctx.playerId);
+      if (!result.ok) hub.sendError(socket, result.code);
+      hub.broadcastState(ctx.room);
+      hub.ensureLoop(ctx.room);
       break;
     }
     case "input":
