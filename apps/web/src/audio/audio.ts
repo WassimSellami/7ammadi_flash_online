@@ -1,3 +1,4 @@
+import { RAIN_DELAY, RAIN_DROPS } from "@flash/core";
 import { ASSET_BASE, STORAGE } from "../config";
 
 interface SfxSpec {
@@ -132,7 +133,7 @@ export class AudioManager {
     this.rainStop = window.setTimeout(() => {
       audio.pause();
       audio.currentTime = 0;
-    }, 1500);
+    }, RAIN_DROPS * RAIN_DELAY * 1000);
   }
 
   private playMusic(): void {

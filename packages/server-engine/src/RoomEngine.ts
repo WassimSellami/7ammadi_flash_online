@@ -708,6 +708,7 @@ export class RoomEngine {
         reason = "phase";
         forceSnapshot = true;
       } else {
+        const botSlots = SLOT_INDICES.filter((slot) => this.slots[slot]?.bot);
         const inputs: InputState[] = SLOT_INDICES.map((slot) => {
           const roomSlot = this.slots[slot];
           if (roomSlot?.bot && this.sim) {
@@ -724,6 +725,7 @@ export class RoomEngine {
               this.botBaseAngles[slot]!,
               this.botChase[slot]!,
               this.matchMatesFor(slot),
+              botSlots,
             );
           }
           return this.effectiveInput(slot);

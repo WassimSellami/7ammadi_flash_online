@@ -29,8 +29,8 @@ function activePlayers(sim: SimState): PlayerState[] {
 }
 
 /**
- * `follow_me` only ends for the brushes that actually collide. Victims that
- * stayed clear keep the winner's colour until their own collision.
+ * A potion only wears off for the brushes that actually collide. Victims that
+ * stayed clear keep painting white until their own collision.
  */
 function restoreTrueColors(...players: PlayerState[]): void {
   for (const player of players) player.paintIndex = player.palette;
@@ -138,6 +138,15 @@ export function collisionCheck(sim: SimState, events: GameEvent[]): boolean {
       if (!tangent(p1, p2)) continue;
       touching.add(p1.slot);
       touching.add(p2.slot);
+
+      // Clock freeze: any collision frees the frozen brush and turns the pair
+      // into a normal collision, so both end up in the broken state.
+      if (p1.frozenTicks > 0 || p2.frozenTicks > 0) {
+        p1.frozenTicks = 0;
+        p2.frozenTicks = 0;
+        started = startNormalCollision(sim, p1, p2, events) || started;
+        continue;
+      }
 
       if (p1.bandi && p2.bandi) {
         started = startNormalCollision(sim, p1, p2, events) || started;

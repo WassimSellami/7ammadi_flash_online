@@ -18,12 +18,14 @@ import {
   FLAG_BEATEN,
   FLAG_BROKEN,
   FLAG_FAT,
+  FLAG_FROZEN,
   FLAG_JUMPING,
   FLAG_KNOCKBACK,
   FLAG_SPEED,
   FLAG_SQUASH,
   PLAYFIELD_BOTTOM,
   PLAYFIELD_TOP,
+  paintRadius,
   ROUND_TICKS,
   SLOT_INDICES,
   iconMargin,
@@ -119,10 +121,10 @@ export class SceneRenderer {
     this.effects = new EffectsManager();
     this.prize = new PrizeView(assets.prizeIcons);
     this.players = [
-      new PlayerView(assets.brushes, 2),
-      new PlayerView(assets.brushes, 0),
-      new PlayerView(assets.brushes, 1),
-      new PlayerView(assets.brushes, 3),
+      new PlayerView(assets.brushes, assets.bandage, 2),
+      new PlayerView(assets.brushes, assets.bandage, 0),
+      new PlayerView(assets.brushes, assets.bandage, 1),
+      new PlayerView(assets.brushes, assets.bandage, 3),
     ];
 
     this.countdown = new Text({
@@ -432,6 +434,9 @@ export class SceneRenderer {
       case "evil":
         this.audio.play("evil");
         break;
+      case "sparkle":
+        this.effects.sparkle(event.x, event.y, PLAYER_NAMES[event.slot] ?? "");
+        break;
       case "wall":
         this.effects.ripple(event.x, event.y, this.palettes[event.slot] ?? 0);
         break;
@@ -474,7 +479,8 @@ export class SceneRenderer {
       if (
         local &&
         snapshot.phase === "playing" &&
-        (source.fl & FLAG_KNOCKBACK) === 0
+        (source.fl & FLAG_KNOCKBACK) === 0 &&
+        (source.fl & FLAG_FROZEN) === 0
       ) {
         // Own-player prediction: advance from the predicted angle, then
         // reconcile toward the authoritative snapshot.
@@ -535,15 +541,15 @@ export class SceneRenderer {
       const color = paletteColor(source.c);
       const canPaint = source.pt === true && (source.fl & FLAG_KNOCKBACK) === 0;
       if (snapshot.phase === "playing" && canPaint) {
-        this.paint.stampTrail(name, display.x, display.y, source.r, color);
+        this.paint.stampTrail(name, display.x, display.y, paintRadius(source.r), color);
       } else if (snapshot.phase === "countdown") {
         if (canPaint && !this.countdownStamped.has(slot)) {
-          this.paint.stamp(source.x, source.y, source.r, color);
+          this.paint.stamp(source.x, source.y, paintRadius(source.r), color);
           this.countdownStamped.add(slot);
         }
-        this.paint.snap(name, source.x, source.y, source.r, color);
+        this.paint.snap(name, source.x, source.y, paintRadius(source.r), color);
       } else {
-        this.paint.snap(name, display.x, display.y, source.r, color);
+        this.paint.snap(name, display.x, display.y, paintRadius(source.r), color);
       }
     }
 
@@ -582,8 +588,8 @@ export class SceneRenderer {
           y: display.y,
           angle,
           radius: source.r,
-          // `follow_me` strips the brush colour entirely; otherwise the sprite
-          // keeps its lobby palette (reference brush icons are name-based).
+          // A potion victim's brush takes the cream bristle colour; otherwise
+          // the sprite keeps its lobby palette (brush icons are name-based).
           colorIndex: source.c < 0 ? -1 : (this.palettes[slot] ?? source.c),
           paintIndex: source.c,
           lift,
@@ -596,6 +602,7 @@ export class SceneRenderer {
           bandi: (source.fl & FLAG_BANDI) !== 0,
           bandiLeft,
           broken: (source.fl & FLAG_BROKEN) !== 0,
+          frozen: (source.fl & FLAG_FROZEN) !== 0,
         },
         dt,
       );

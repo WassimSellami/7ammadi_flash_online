@@ -51,6 +51,7 @@ export function stateHash(sim: SimState): string {
         player.jumpingToWall ? "k" : "-",
         num(player.bandiTimeLeft),
         player.powerup ?? "-",
+        String(player.frozenTicks),
       ].join(","),
     );
   }

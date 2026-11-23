@@ -18,8 +18,8 @@ Reference: `../7ammadi_flash_ai` (`data/player.py`, `data/game.py`,
   punch cancels bandi on the victim and resets both paint colours.
 - Prizes: spawn every 12 s, 12 s lifetime, 80-sample distance placement
   (fallback to the best sample), mode prizes clear the previous powerup,
-  rain = 30 drops of radius 36 every 50 ms, boom = radius 200, follow_me sets
-  both paint indices to the winner's true palette.
+  rain = 30 drops of radius 36 every 50 ms, boom = radius 200, potion keeps the
+  winner's palette and repaints every victim's brush in the potion handle colour.
 - `set_to_normal` on every normal collision clears `bandi`/`powerup`, resets
   radius and paint colour — this is how speed/fat are consumed.
 - Countdown steering: angle changes start during the countdown, and both
@@ -70,8 +70,8 @@ acceptance criterion "never more than 7 spawns".
   `_main_sprite_rect`, so the stray sparkle in the source PNG is ignored),
   recoloured with the same paint-green predicate and fitted to 80x80; the swing
   effect uses two textures split at the cream bristle line, rotating around
-  `splitY - 5`. `follow_me` changes the paint colour only, never the brush
-  sprite palette. The brush sprite, shadow, ring and marker are drawn at
+  `splitY - 5`. A potion victim's brush takes the potion handle colour;
+  everyone else keeps the lobby palette. The brush sprite, shadow, ring and marker are drawn at
   `BRUSH_VISUAL_SCALE = 1.3` (requested, larger than the reference); movement,
   collision and paint radii stay identical to the reference.
 - Scoreboard/menu visuals are DOM overlays, but the result cards count both

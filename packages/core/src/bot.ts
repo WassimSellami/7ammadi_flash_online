@@ -9,10 +9,12 @@
  *  - roam: sweep the heading between +35° and -35° around the base heading,
  *    one full there-and-back per second;
  *  - prize: aim straight at the active prize (no sweep offset);
- *  - follow_me holder: keep its colours by fleeing every other brush;
  *  - bandi: hunt every opponent in turn, starting with the closest, then the
  *    closest of the remaining ones (knocked-down players count as handled and
  *    teammates are never chased, though a collision with one still counts);
+ *  - colorless (potion victim): up to two bots chase the potion user, the rest
+ *    chase the nearest other colorless bot; a bot never chases the bot that
+ *    just caught it, and a collision immediately retargets the caught bot;
  *  - everybody else plays normally (prizes, then roaming);
  *  - walls: reflect an outward heading back into the playfield early enough
  *    for the limited turn rate to avoid sliding along a border.
@@ -20,6 +22,7 @@
 
 import {
   D_WIDTH,
+  NO_PAINT,
   PLAYFIELD_BOTTOM,
   PLAYFIELD_TOP,
   iconMargin,
@@ -105,23 +108,6 @@ function avoidWalls(player: PlayerState, desired: number, wide: boolean): number
   return (Math.atan2(vy, vx) * 180) / Math.PI;
 }
 
-/**
- * The follow_me holder is the only brush whose palette matches its own paint
- * while somebody else is painted in that same colour. It wants the effect to
- * last, so it runs away instead of chasing.
- */
-function isFollowMeHolder(sim: SimState, player: PlayerState): boolean {
-  if (player.paintIndex !== player.palette) return false;
-  return sim.activeSlots.some((slot) => {
-    const other = sim.players[slot]!;
-    return (
-      other.slot !== player.slot &&
-      other.palette !== player.palette &&
-      other.paintIndex === player.palette
-    );
-  });
-}
-
 /** Teammates are never bandi targets, though a brush collision still counts. */
 function teammateSlots(sim: SimState, player: PlayerState): SlotIndex[] {
   if (!sim.teams) return [];
@@ -168,10 +154,144 @@ export interface BotChaseState {
   active: boolean;
   handled: SlotIndex[];
   target: SlotIndex | null;
+  /** True while the bot is running the colorless (potion victim) chase. */
+  colorless: boolean;
+  /** The bot that just caught this one; never chased while colorless. */
+  caughtBy: SlotIndex | null;
+  /** Sticky colorless target, kept even after it regains its colour. */
+  colorlessTarget: SlotIndex | null;
 }
 
 export function createBotChaseState(): BotChaseState {
-  return { active: false, handled: [], target: null };
+  return {
+    active: false,
+    handled: [],
+    target: null,
+    colorless: false,
+    caughtBy: null,
+    colorlessTarget: null,
+  };
+}
+
+function isColorless(player: PlayerState): boolean {
+  return player.paintIndex === NO_PAINT;
+}
+
+/** Active colorless slots among the bot slots, in stable slot order. */
+function colorlessSlots(sim: SimState, botSlots: readonly SlotIndex[]): SlotIndex[] {
+  return botSlots.filter((slot) => {
+    const other = sim.players[slot];
+    return other !== undefined && sim.activeSlots.includes(slot) && isColorless(other);
+  });
+}
+
+function nearestPlayer(
+  player: PlayerState,
+  candidates: readonly PlayerState[],
+): PlayerState | null {
+  let best: PlayerState | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const other of candidates) {
+    const distance = (other.x - player.x) ** 2 + (other.y - player.y) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = other;
+    }
+  }
+  return best;
+}
+
+/** Nearest active teammate currently frozen by the clock prize. */
+function frozenTeammate(
+  sim: SimState,
+  player: PlayerState,
+  mates: readonly SlotIndex[],
+): PlayerState | null {
+  const frozen: PlayerState[] = [];
+  for (const slot of mates) {
+    if (!sim.activeSlots.includes(slot)) continue;
+    const mate = sim.players[slot];
+    if (mate && mate.frozenTicks > 0) frozen.push(mate);
+  }
+  return nearestPlayer(player, frozen);
+}
+
+/** Nearest active player currently holding the potion powerup. */
+function nearestPotionUser(
+  sim: SimState,
+  player: PlayerState,
+  exclude: SlotIndex | null,
+): PlayerState | null {
+  const users: PlayerState[] = [];
+  for (const slot of sim.activeSlots) {
+    if (slot === player.slot || slot === exclude) continue;
+    const other = sim.players[slot]!;
+    if (other.powerup === "potion") users.push(other);
+  }
+  return nearestPlayer(player, users);
+}
+
+/** Another colorless bot touching this one just caught it. */
+function touchingColorlessBot(
+  sim: SimState,
+  player: PlayerState,
+  botSlots: readonly SlotIndex[],
+): SlotIndex | null {
+  for (const slot of colorlessSlots(sim, botSlots)) {
+    if (slot === player.slot) continue;
+    const other = sim.players[slot]!;
+    const dx = other.x - player.x;
+    const dy = other.y - player.y;
+    const reach = other.radius + player.radius;
+    if (dx * dx + dy * dy <= reach * reach) return slot;
+  }
+  return null;
+}
+
+/**
+ * Colorless target: the first two colorless bots chase the potion user; any
+ * remaining ones chase the nearest other colorless bot. The bot that caught
+ * this one is never targeted.
+ */
+function colorlessTarget(
+  sim: SimState,
+  player: PlayerState,
+  chase: BotChaseState | undefined,
+  botSlots: readonly SlotIndex[],
+): PlayerState | null {
+  const caughtBy = chase?.caughtBy ?? null;
+
+  // Keep chasing the previous target even if it already regained its colour:
+  // once a colorless bot commits to a chase, it must not give up mid-way.
+  if (chase && chase.colorlessTarget !== null) {
+    const kept = sim.players[chase.colorlessTarget];
+    if (
+      kept &&
+      kept.slot !== player.slot &&
+      kept.slot !== caughtBy &&
+      sim.activeSlots.includes(kept.slot)
+    ) {
+      return kept;
+    }
+    chase.colorlessTarget = null;
+  }
+
+  const colorless = colorlessSlots(sim, botSlots);
+  const rank = colorless.indexOf(player.slot);
+  let target: PlayerState | null = null;
+  if (rank >= 0 && rank < 2) {
+    target = nearestPotionUser(sim, player, caughtBy);
+  }
+  if (!target) {
+    const others: PlayerState[] = [];
+    for (const slot of colorless) {
+      if (slot === player.slot || slot === caughtBy) continue;
+      others.push(sim.players[slot]!);
+    }
+    target = nearestPlayer(player, others);
+  }
+  if (chase) chase.colorlessTarget = target ? target.slot : null;
+  return target;
 }
 
 function bandiTarget(
@@ -228,31 +348,6 @@ function bandiTarget(
   return chase.target === null ? null : (sim.players[chase.target] ?? null);
 }
 
-/**
- * Heading that runs away from every other brush, weighted by distance so the
- * nearest threat dominates. The follow_me holder uses this to stay unpainted
- * and keep everyone else in its colour.
- */
-function fleeAngle(sim: SimState, player: PlayerState): number {
-  let vx = 0;
-  let vy = 0;
-  for (const slot of sim.activeSlots) {
-    const other = sim.players[slot]!;
-    if (other.slot === player.slot) continue;
-    const dx = player.x - other.x;
-    const dy = player.y - other.y;
-    const distanceSq = Math.max(1, dx * dx + dy * dy);
-    vx += dx / distanceSq;
-    vy += dy / distanceSq;
-  }
-  if (vx === 0 && vy === 0) {
-    const centerX = D_WIDTH / 2;
-    const centerY = (PLAYFIELD_TOP + PLAYFIELD_BOTTOM) / 2;
-    return angleTo(player, centerX, centerY);
-  }
-  return (Math.atan2(vy, vx) * 180) / Math.PI;
-}
-
 function sweepOffset(sim: SimState, slot: SlotIndex): number {
   const period = BOT_SWEEP_PERIOD_TICKS;
   const t = ((sim.tick + slot * 15) % period) / period;
@@ -263,6 +358,20 @@ function sweepOffset(sim: SimState, slot: SlotIndex): number {
 
 function roamAngle(sim: SimState, slot: SlotIndex, baseAngle: number): number {
   return baseAngle + sweepOffset(sim, slot);
+}
+
+/**
+ * Bots do not pounce on a fresh prize instantly: the n-th active bot waits
+ * 1 s, 1.5 s, 2 s, ... before it starts steering toward it.
+ */
+function prizeReactionReady(
+  sim: SimState,
+  slot: SlotIndex,
+  botSlots: readonly SlotIndex[],
+): boolean {
+  const activeBots = botSlots.filter((candidate) => sim.activeSlots.includes(candidate));
+  const rank = Math.max(0, activeBots.indexOf(slot));
+  return sim.prize.ageMs >= (rank + 2) * 500;
 }
 
 /**
@@ -319,6 +428,7 @@ export function botInput(
   baseAngle: number,
   chase?: BotChaseState,
   excludeSlots: readonly SlotIndex[] = [],
+  botSlots: readonly SlotIndex[] = sim.activeSlots as readonly SlotIndex[],
 ): InputState {
   if (sim.phase !== "playing") return NEUTRAL_INPUT;
   const player = sim.players[slot];
@@ -331,23 +441,55 @@ export function botInput(
     chase.target = null;
   }
 
+  const colorless = isColorless(player);
+  if (chase) {
+    if (!colorless) {
+      chase.colorless = false;
+      chase.caughtBy = null;
+      chase.colorlessTarget = null;
+    } else if (!chase.colorless) {
+      chase.colorless = true;
+      chase.caughtBy = null;
+      chase.colorlessTarget = null;
+      chase.target = null;
+    } else {
+      // Touching another colorless bot means it just caught this one.
+      const catcher = touchingColorlessBot(sim, player, botSlots);
+      if (catcher !== null) {
+        chase.caughtBy = catcher;
+        chase.colorlessTarget = null;
+        chase.target = null;
+      }
+    }
+  }
+
   let desired: number;
   let wide = false;
-  if (isFollowMeHolder(sim, player)) {
-    // The holder keeps its colours by running away from every other brush.
-    desired = fleeAngle(sim, player);
+  // Team play first: rush the nearest frozen teammate so the contact frees them.
+  const rescue = player.frozenTicks > 0 ? null : frozenTeammate(sim, player, mates);
+  if (rescue) {
+    desired = angleTo(player, rescue.x, rescue.y);
+  } else if (colorless) {
+    const target = colorlessTarget(sim, player, chase, botSlots);
+    if (chase) chase.target = target ? target.slot : null;
+    if (target) {
+      desired = angleTo(player, target.x, target.y);
+    } else {
+      desired = roamAngle(sim, slot, baseAngle);
+      wide = true;
+    }
   } else if (player.bandi) {
     const target = chase
       ? bandiTarget(sim, player, chase, mates)
       : nearestOpponent(sim, player, undefined, mates);
     if (target) {
       desired = angleTo(player, target.x, target.y);
-    } else if (sim.prize.active) {
+    } else if (sim.prize.active && prizeReactionReady(sim, slot, botSlots)) {
       desired = angleTo(player, sim.prize.x, sim.prize.y);
     } else {
       desired = roamAngle(sim, slot, baseAngle);
     }
-  } else if (sim.prize.active) {
+  } else if (sim.prize.active && prizeReactionReady(sim, slot, botSlots)) {
     desired = angleTo(player, sim.prize.x, sim.prize.y);
   } else {
     desired = roamAngle(sim, slot, baseAngle);

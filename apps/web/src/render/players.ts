@@ -1,13 +1,27 @@
 /**
  * Brush players: tinted sprite, two-layer swing, jump lift/squash, shadow,
- * direction marker, bandi ring and "broken" stars.
+ * direction marker, bandi ring and the "broken" bandage overlay.
  *
- * The shadow, ring, stars and marker are clipped to the playfield exactly like
+ * The shadow, ring, bandage and marker are clipped to the playfield exactly like
  * `EffectsManager` does in the reference; the brush itself is never clipped.
  */
 
-import { Container, Graphics, Sprite, Text, TextStyle } from "pixi.js";
-import { D_WIDTH, PAINT_PALETTE, PLAYFIELD_BOTTOM, PLAYFIELD_TOP } from "@flash/core";
+import {
+  ColorMatrixFilter,
+  Container,
+  Graphics,
+  Sprite,
+  Text,
+  TextStyle,
+  type Texture,
+} from "pixi.js";
+import {
+  D_WIDTH,
+  PAINT_PALETTE,
+  PLAYFIELD_BOTTOM,
+  PLAYFIELD_TOP,
+  POTION_BRUSH_RGB,
+} from "@flash/core";
 import { FONT_FAMILY, FX_SCALE } from "../config";
 import type { BrushLayers } from "./assets";
 
@@ -36,6 +50,8 @@ export interface PlayerViewState {
   bandi: boolean;
   bandiLeft: number;
   broken: boolean;
+  /** Clock-prize victim: brush is greyed out and cannot move. */
+  frozen: boolean;
 }
 
 function playfieldMask(): Graphics {
@@ -50,7 +66,7 @@ export class PlayerView {
   private readonly over = new Container();
   private readonly shadow = new Graphics();
   private readonly ring = new Graphics();
-  private readonly stars = new Graphics();
+  private readonly bandage: Sprite;
   private readonly marker = new Graphics();
   private readonly brush = new Container();
   private readonly label = new Text({
@@ -67,19 +83,27 @@ export class PlayerView {
   private readonly upper: Sprite;
   private readonly lower: Sprite;
   private readonly layers: Map<number, BrushLayers>;
+  private readonly grayFilter = new ColorMatrixFilter();
+  private grayed = false;
   private colorIndex = -1;
   private splitY = 50;
   private elapsed = 0;
 
-  constructor(layers: Map<number, BrushLayers>, colorIndex: number) {
+  constructor(layers: Map<number, BrushLayers>, bandageTexture: Texture, colorIndex: number) {
     this.layers = layers;
+    this.bandage = new Sprite(bandageTexture);
+    this.bandage.anchor.set(0.5);
+    this.bandage.visible = false;
+    const bandageScale = (VISUAL_SIZE * 0.62) / this.bandage.texture.width;
+    this.bandage.scale.set(bandageScale);
+    this.grayFilter.desaturate();
 
     const groundMask = playfieldMask();
     this.ground.addChild(this.shadow, this.ring, groundMask);
     this.ground.mask = groundMask;
 
     const overMask = playfieldMask();
-    this.over.addChild(this.stars, this.marker, overMask);
+    this.over.addChild(this.bandage, this.marker, overMask);
     this.over.mask = overMask;
 
     this.container.addChild(this.ground, this.brush, this.over, this.label);
@@ -108,7 +132,7 @@ export class PlayerView {
     }
     const rgb =
       colorIndex < 0
-        ? ([156, 160, 166] as const)
+        ? POTION_BRUSH_RGB
         : (PAINT_PALETTE[colorIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb);
     this.label.style.fill = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
   }
@@ -116,6 +140,11 @@ export class PlayerView {
   update(state: PlayerViewState, dt: number): void {
     this.elapsed += dt;
     this.setColor(state.colorIndex);
+
+    if (state.frozen !== this.grayed) {
+      this.grayed = state.frozen;
+      this.brush.filters = state.frozen ? [this.grayFilter] : null;
+    }
 
     const baseY = state.y - state.lift;
     this.brush.position.set(state.x, baseY);
@@ -130,7 +159,7 @@ export class PlayerView {
 
     this.drawShadow(state);
     this.drawRing(state);
-    this.drawStars(state);
+    this.drawBandage(state, baseY);
     this.drawMarker(state, baseY);
 
     if (state.name) {
@@ -179,7 +208,7 @@ export class PlayerView {
     if (expiring) ringAlpha = Math.min(255, ringAlpha + Math.round(45 * urgency));
     const rgb =
       state.paintIndex < 0
-        ? ([156, 160, 166] as const)
+        ? POTION_BRUSH_RGB
         : (PAINT_PALETTE[state.paintIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb);
     const color = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
 
@@ -192,35 +221,11 @@ export class PlayerView {
       });
   }
 
-  /** `EffectsManager._draw_broken_stars`. */
-  private drawStars(state: PlayerViewState): void {
-    this.stars.clear();
+  /** Bandage overlay shown once a collided brush falls into broken mode. */
+  private drawBandage(state: PlayerViewState, baseY: number): void {
+    this.bandage.visible = state.broken;
     if (!state.broken) return;
-    const centerX = state.x;
-    const centerY = state.y - state.lift;
-    const orbit = VISUAL_SIZE / 2 + 10 * FX_SCALE;
-    for (let index = 0; index < 5; index += 1) {
-      const angle = this.elapsed * 2.6 + (index * Math.PI * 2) / 5;
-      const wobble = Math.sin(this.elapsed * 5 + index * 1.7) * 3 * FX_SCALE;
-      const starX = centerX + Math.cos(angle) * (orbit + wobble);
-      const starY = centerY + Math.sin(angle) * (orbit + wobble * 0.6);
-      const radius = (5.5 + 1.5 * Math.sin(this.elapsed * 7 + index * 2.1)) * FX_SCALE;
-      const points: Array<[number, number]> = [];
-      for (let point = 0; point < 16; point += 1) {
-        const pointAngle = (point * Math.PI) / 8;
-        const length = point % 2 === 0 ? radius : radius * 0.42;
-        points.push([
-          starX + Math.cos(pointAngle) * length,
-          starY + Math.sin(pointAngle) * length,
-        ]);
-      }
-      this.stars.moveTo(points[0]![0], points[0]![1]);
-      for (let index2 = 1; index2 < points.length; index2 += 1) {
-        this.stars.lineTo(points[index2]![0], points[index2]![1]);
-      }
-      this.stars.closePath();
-    }
-    this.stars.fill(0xc48a1a);
+    this.bandage.position.set(state.x, baseY + VISUAL_SIZE * 0.06);
   }
 
   /** `EffectsManager._draw_direction_marker`. */

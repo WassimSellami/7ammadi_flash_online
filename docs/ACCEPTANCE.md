@@ -19,7 +19,7 @@ Evidence for each plan milestone. Commands were run in this repository.
 | Motion parity, sub-pixel accumulators | `motion.test.ts` asserts `4,4,4,5` normal and `3,3,4` while jumping, wall restore, knockback target. |
 | Collision/slow/smash semantics | `paint-collision.test.ts` (jump timer 84 ticks, slow 300 ticks, bandi punch, bandi-vs-bandi). |
 | Paint flag quirk | `paint-collision.test.ts` (A jump suppresses both; B jump does not; countdown stamps; idle stamping idempotent). |
-| Prizes | `prize.test.ts` (6 spawns/12 s, one per kind, expiry, rain 30 drops/50 ms, boom, follow_me, mode clearing, bandi 10 s). |
+| Prizes | `prize.test.ts` (6 spawns/12 s, one per kind, expiry, rain 30 drops/50 ms, boom, potion, mode clearing, bandi 10 s). |
 | Score parity | `mask.test.ts` compares the mask score with a brute-force 1920x1006 reference painter (â‰¤1 percentage point). |
 
 ## M2 â€” authoritative server

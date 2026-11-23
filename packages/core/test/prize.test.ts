@@ -48,12 +48,12 @@ describe("prize budget and schedule", () => {
     expect(Object.values(sim.prize.counts).every((value) => value === PRIZES_PER_KIND)).toBe(true);
   });
 
-  it("spawns 6 prizes at 12 s intervals over a full round", () => {
-    const sim = toPlaying(5040);
+  it("spawns 3 prizes at 28 s intervals over a full round", () => {
+    const sim = toPlaying(6720);
     park(sim);
     const spawnTicks: number[] = [];
     const kinds: string[] = [];
-    for (let i = 0; i < 5040 && sim.phase === "playing"; i += 1) {
+    for (let i = 0; i < 6720 && sim.phase === "playing"; i += 1) {
       const events = stepSim(sim, noInput);
       for (const event of events) {
         if (event.type === "spawn") {
@@ -62,19 +62,19 @@ describe("prize budget and schedule", () => {
         }
       }
     }
-    expect(spawnTicks).toHaveLength(6);
-    expect(new Set(kinds).size).toBe(6);
+    expect(spawnTicks).toHaveLength(3);
+    expect(new Set(kinds).size).toBe(3);
     const gaps = spawnTicks.slice(1).map((tick, index) => tick - spawnTicks[index]!);
-    expect(gaps.every((gap) => gap === 720)).toBe(true);
-    expect(spawnTicks[0]).toBe(4 + 720 - 1);
+    expect(gaps.every((gap) => gap === 1680)).toBe(true);
+    expect(spawnTicks[0]).toBe(4 + 1680 - 1);
   });
 
-  it("expires a prize after 12 s", () => {
+  it("expires a prize after 28 s", () => {
     const sim = toPlaying();
     sim.prize.active = true;
     sim.prize.kind = "speed";
     sim.prize.ageMs = 0;
-    for (let i = 0; i < 719; i += 1) updatePrize(sim, 1000 / 60);
+    for (let i = 0; i < 1679; i += 1) updatePrize(sim, 1000 / 60);
     expect(sim.prize.active).toBe(true);
     expect(prizeExpired(sim.prize)).toBe(false);
     updatePrize(sim, 1000 / 60);
@@ -83,7 +83,7 @@ describe("prize budget and schedule", () => {
 });
 
 describe("prize rewards", () => {
-  it("rain stamps 30 drops of radius 36 every 50 ms", () => {
+  it("rain stamps 45 drops of radius 36 every 50 ms", () => {
     const sim = toPlaying();
     const events: GameEvent[] = [];
     startRain(sim, 2, events);
@@ -115,25 +115,25 @@ describe("prize rewards", () => {
     expect(paintedCount(sim.mask, 2) - before).toBeGreaterThan(7000);
   });
 
-  it("follow_me strips every brush of its colour", () => {
+  it("potion keeps the winner coloured and strips the victims", () => {
     const sim = toPlaying();
     const [winner, loser] = sim.players;
-    winner.paintIndex = 2;
+    winner.paintIndex = NO_PAINT;
     loser.paintIndex = 0;
-    sim.prize.kind = "follow_me";
+    sim.prize.kind = "potion";
     const events: GameEvent[] = [];
     rewardPrize(sim, winner, loser, events);
-    expect(winner.paintIndex).toBe(NO_PAINT);
+    expect(winner.paintIndex).toBe(winner.palette);
     expect(loser.paintIndex).toBe(NO_PAINT);
-    expect(winner.powerup).toBe("follow_me");
+    expect(winner.powerup).toBe("potion");
     expect(events.some((event) => event.type === "evil")).toBe(true);
   });
 
-  it("does not overwrite an active powerup marker with follow_me", () => {
+  it("does not overwrite an active powerup marker with potion", () => {
     const sim = toPlaying();
     const [winner, loser] = sim.players;
     winner.powerup = "speed";
-    sim.prize.kind = "follow_me";
+    sim.prize.kind = "potion";
     rewardPrize(sim, winner, loser, []);
     expect(winner.powerup).toBe("speed");
   });

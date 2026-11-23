@@ -115,6 +115,7 @@ export function createPlayer(
     jumpingToWall: false,
     collisionJumpTicks: 0,
     collisionBrokenTicks: 0,
+    frozenTicks: 0,
     knockbackElapsed: 0,
     knockbackDuration: KNOCKBACK_TIME,
     knockbackStartY: D_HEIGHT / 2,
@@ -220,6 +221,7 @@ export function setupPlayer(
   player.punchContacted = false;
   player.collisionJumpTicks = 0;
   player.collisionBrokenTicks = 0;
+  player.frozenTicks = 0;
   player.x = (offset * D_WIDTH) / 3;
   player.y = D_HEIGHT / 2;
   player.mode = WAIT_MODE;
@@ -330,6 +332,10 @@ export function changeCoor(player: PlayerState, elapsedMs = 0): void {
     0,
     player.wallCooldown - Math.max(0, elapsedMs) / 1000,
   );
+
+  // Clock freeze: steering still runs through `changeAngle`, but the brush
+  // cannot move (and cannot be knocked back) until the timer expires.
+  if (player.frozenTicks > 0) return;
 
   if (player.jumpingToWall) {
     if (player.knockbackPaused) return;

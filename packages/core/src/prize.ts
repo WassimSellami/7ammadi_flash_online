@@ -19,6 +19,7 @@ import {
   PRIZE_TIME,
   RAIN_DELAY,
   RAIN_DROPS,
+  TICKS_PER_SECOND,
   BIG_RADIUS,
   MODE_PRIZES,
 } from "./constants";
@@ -38,7 +39,7 @@ export function createPrizeState(): PrizeState {
     y: Math.floor((PLAYFIELD_TOP + PLAYFIELD_BOTTOM) / 2),
     ageMs: 0,
     haloAngle: 0,
-    counts: { rain: 0, follow_me: 0, bandi: 0, fat: 0, boom: 0, speed: 0 },
+    counts: { rain: 0, potion: 0, bandi: 0, fat: 0, boom: 0, speed: 0, clock: 0 },
     rainPending: [],
     rainAccumMs: 0,
     rainColorIndex: 0,
@@ -227,12 +228,29 @@ export function rewardPrize(
     case "bandi":
       applyBigBandi(winner);
       break;
-    case "follow_me":
+    case "clock": {
+      // Victims stay frozen until 3 s before the next scheduled prize spawn.
+      const nextSpawnTick = sim.nextPrizeIndex * PRIZE_TIME * TICKS_PER_SECOND;
+      const freezeTicks = Math.max(
+        0,
+        nextSpawnTick - sim.roundTick - 3 * TICKS_PER_SECOND,
+      );
+      for (const other of activePlayers(sim)) {
+        if (other !== winner) other.frozenTicks = freezeTicks;
+      }
+      break;
+    }
+    case "potion":
       events.push({ tick: sim.tick, type: "evil" });
-      // Every brush loses its colour instead of copying the winner's palette.
-      for (const brush of activePlayers(sim)) brush.paintIndex = NO_PAINT;
+      // The winner keeps (or regains) its colour; everyone else loses theirs.
+      winner.paintIndex = winner.palette;
+      for (const other of activePlayers(sim)) {
+        if (other === winner) continue;
+        other.paintIndex = NO_PAINT;
+        events.push({ tick: sim.tick, type: "sparkle", slot: other.slot, x: other.x, y: other.y });
+      }
       if (winner.powerup === null && !winner.bandi) {
-        winner.powerup = "follow_me";
+        winner.powerup = "potion";
       }
       break;
   }
@@ -240,7 +258,7 @@ export function rewardPrize(
   clampToPlayfield(winner);
 }
 
-/** `Prize.rain`: 30 drops, first stamped immediately, rest over 1.5 s. */
+/** `Prize.rain`: 45 drops, first stamped immediately, rest over 2.25 s. */
 export function startRain(
   sim: SimState,
   colorIndex: number,

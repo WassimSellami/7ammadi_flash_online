@@ -3,6 +3,7 @@ import {
   BIG_RADIUS,
   COUNTDOWN_TICKS,
   NEUTRAL_INPUT,
+  NO_PAINT,
   WAIT_MODE,
   armCollisionTimers,
   collisionCheck,
@@ -212,7 +213,7 @@ describe("collisions", () => {
     expect(paintedCount(sim.mask, p3!.palette)).toBeGreaterThan(before);
   });
 
-  it("restores follow_me colours only for the brushes that collide", () => {
+  it("restores potion colours only for the brushes that collide", () => {
     const sim = createSim({
       palettes: [2, 0, 1, 3],
       activeSlots: 4,
@@ -222,8 +223,11 @@ describe("collisions", () => {
     for (let i = 0; i < 4; i += 1) stepSim(sim, noInput);
     const [winner, a, b, bystander] = sim.players;
     for (const player of sim.players) player.mode = WAIT_MODE;
-    // follow_me: everyone paints the winner's colour.
-    for (const player of sim.players) player.paintIndex = winner!.palette;
+    // Potion: the winner stays coloured, every victim loses its paint.
+    winner!.paintIndex = winner!.palette;
+    for (const player of sim.players) {
+      if (player !== winner) player.paintIndex = NO_PAINT;
+    }
     a!.x = 900;
     a!.y = 500;
     b!.x = 940;
@@ -235,8 +239,8 @@ describe("collisions", () => {
 
     expect(a!.paintIndex).toBe(a!.palette);
     expect(b!.paintIndex).toBe(b!.palette);
-    // A victim that stayed clear keeps the winner's colour.
-    expect(bystander!.paintIndex).toBe(winner!.palette);
+    // A victim that stayed clear stays white.
+    expect(bystander!.paintIndex).toBe(NO_PAINT);
     expect(winner!.paintIndex).toBe(winner!.palette);
   });
 });

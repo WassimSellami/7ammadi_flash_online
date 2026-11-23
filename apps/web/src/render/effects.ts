@@ -48,6 +48,7 @@ type FxKind =
   | "puff"
   | "burst_star"
   | "star"
+  | "spark"
   | "label";
 
 interface Fx {
@@ -64,6 +65,10 @@ interface Fx {
   text: string;
   body?: Text;
   shadow?: Text;
+  /** Player name this effect follows, plus its offset from that player. */
+  follow: string;
+  ox: number;
+  oy: number;
 }
 
 export interface ObserveState {
@@ -166,8 +171,11 @@ export class EffectsManager {
   /** Labels live above players and the prize, like `draw_labels` in the loop. */
   readonly labels = new Container();
   private readonly graphics = new Graphics();
+  /** Sparks are drawn above the players, unlike the rest of the effects layer. */
+  private readonly overlay = new Graphics();
   private readonly items: Fx[] = [];
   private readonly trackers = new Map<string, Tracker>();
+  private readonly followTargets = new Map<string, { x: number; y: number }>();
   private trailPhase = 0;
   private elapsed = 0;
 
@@ -178,7 +186,7 @@ export class EffectsManager {
     this.container.eventMode = "none";
 
     const labelMask = playfieldMask();
-    this.labels.addChild(labelMask);
+    this.labels.addChild(labelMask, this.overlay);
     this.labels.mask = labelMask;
     this.labels.eventMode = "none";
   }
@@ -187,7 +195,9 @@ export class EffectsManager {
     for (const fx of this.items) this.destroyText(fx);
     this.items.length = 0;
     this.graphics.clear();
+    this.overlay.clear();
     this.trackers.clear();
+    this.followTargets.clear();
     this.trailPhase = 0;
     this.elapsed = 0;
   }
@@ -238,7 +248,7 @@ export class EffectsManager {
     vy = 0,
     delay = 0,
     text = "",
-  ): void {
+  ): Fx | null {
     if (kind === "trail") {
       if (this.countKind((fx) => fx.kind === "trail") >= MAX_TRAIL_EFFECTS) {
         this.dropFirst((fx) => fx.kind === "trail");
@@ -253,7 +263,7 @@ export class EffectsManager {
     }
 
     if (this.items.length >= MAX_EFFECTS) {
-      if (!this.dropFirst((fx) => this.isLimited(fx))) return;
+      if (!this.dropFirst((fx) => this.isLimited(fx))) return null;
     }
 
     const fx: Fx = {
@@ -268,6 +278,9 @@ export class EffectsManager {
       age: 0,
       delay,
       text,
+      follow: "",
+      ox: 0,
+      oy: 0,
     };
 
     if (kind === "label") {
@@ -300,6 +313,7 @@ export class EffectsManager {
     }
 
     this.items.push(fx);
+    return fx;
   }
 
   burst(x: number, y: number, color: readonly [number, number, number], count = 10, speed = 150, delay = 0): void {
@@ -330,6 +344,40 @@ export class EffectsManager {
     const color = paletteColor(colorIndex);
     this.add("star", x, y, [255, 227, 130], 0.2, 40 * FX_SCALE);
     this.burst(x, y, color, 16, 260);
+  }
+
+  /** Orange sparks: one stays at the brush, four grow out to the corners and fade. */
+  sparkle(x: number, y: number, follow = ""): void {
+    const life = 2 / 1.5;
+    const spread = 26 * FX_SCALE;
+    const colors: RGB[] = [
+      [255, 210, 70],
+      [245, 175, 35],
+      [222, 140, 24],
+    ];
+    const center = this.add("spark", x, y, colors[0]!, life, 24 * FX_SCALE);
+    if (center) center.follow = follow;
+    const corners: Array<[number, number]> = [
+      [-spread, -spread],
+      [spread, -spread],
+      [-spread, spread],
+      [spread, spread],
+    ];
+    corners.forEach(([ox, oy], index) => {
+      const spark = this.add(
+        "spark",
+        x + ox,
+        y + oy,
+        colors[(index + 1) % colors.length]!,
+        life,
+        22 * FX_SCALE,
+      );
+      if (spark) {
+        spark.follow = follow;
+        spark.ox = ox;
+        spark.oy = oy;
+      }
+    });
   }
 
   explosion(x: number, y: number, color: RGB, radius = 40, delay = 0): void {
@@ -426,9 +474,11 @@ export class EffectsManager {
   observe(players: readonly ObserveState[], dt: number): void {
     const step = Math.max(0, Math.min(dt, 0.1));
     const sharedJump = players.some((player) => player.jumping);
+    this.followTargets.clear();
 
     for (const player of players) {
       const current = { x: player.x, y: player.y };
+      this.followTargets.set(player.name, current);
       let tracker = this.trackers.get(player.name);
       if (!tracker) {
         tracker = {
@@ -558,6 +608,7 @@ export class EffectsManager {
     const stepDt = Math.max(0, dt);
     this.elapsed += stepDt;
     this.graphics.clear();
+    this.overlay.clear();
 
     const alive: Fx[] = [];
     for (const fx of this.items) {
@@ -580,6 +631,14 @@ export class EffectsManager {
 
       fx.x += fx.vx * activeDt;
       fx.y += fx.vy * activeDt;
+
+      if (fx.follow) {
+        const target = this.followTargets.get(fx.follow);
+        if (target) {
+          fx.x = target.x + fx.ox;
+          fx.y = target.y + fx.oy;
+        }
+      }
 
       if (fx.kind === "drop") {
         const damp = Math.exp(-5 * activeDt);
@@ -813,6 +872,42 @@ export class EffectsManager {
         const core = Math.max(1, Math.round(radius * 0.3));
         g.rect(x - core, y - core, core * 2, core * 2).fill({ color: 0xffbe3c, alpha });
       }
+      return;
+    }
+
+    if (fx.kind === "spark") {
+      const grow = Math.min(1, progress / 0.55);
+      const shrink = progress <= 0.55 ? 1 : Math.max(0, 1 - (progress - 0.55) / 0.45);
+      const radius = fx.size * (0.25 + 0.75 * grow) * shrink;
+      if (radius < 0.5) return;
+      const eased = 1 - (1 - progress) ** 2;
+      const travel = 0.35 + 0.65 * eased;
+      const sparkX = x - fx.ox * (1 - travel);
+      const sparkY = y - fx.oy * (1 - travel);
+      const sparkAlpha =
+        progress < 0.6 ? 0.95 : Math.max(0, 0.95 * (1 - (progress - 0.6) / 0.4));
+      const o = this.overlay;
+      const outer: Array<[number, number]> = [];
+      const inner: Array<[number, number]> = [];
+      for (let index = 0; index < 8; index += 1) {
+        const angle = (index * Math.PI) / 4;
+        const length = index % 2 === 0 ? radius : radius * 0.34;
+        outer.push([sparkX + Math.cos(angle) * length, sparkY + Math.sin(angle) * length]);
+        const innerLength = index % 2 === 0 ? radius * 0.72 : radius * 0.22;
+        inner.push([
+          sparkX + Math.cos(angle) * innerLength,
+          sparkY + Math.sin(angle) * innerLength,
+        ]);
+      }
+      polygon(o, outer);
+      o.fill({ color: 0x50280c, alpha: sparkAlpha });
+      polygon(o, inner);
+      o.fill({ color: rgbNumber(color), alpha: sparkAlpha });
+      const core = Math.max(1, Math.round(radius * 0.28));
+      o.rect(sparkX - core, sparkY - core, core * 2, core * 2).fill({
+        color: 0xffd85a,
+        alpha: sparkAlpha,
+      });
       return;
     }
 

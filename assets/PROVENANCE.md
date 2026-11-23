@@ -13,7 +13,7 @@ versioned path `/v1/…` from this folder.
 | `bria-rmbg3-cutout.png` / `.ico` | `data/icons/bria-rmbg3-cutout.png/.ico` | brush sprite; recoloured at runtime |
 | `music.png` | `data/icons/music.png` | HUD toggle |
 | `volume.png` | `data/icons/volume.png` | HUD toggle |
-| `rain.png`, `boom.png`, `bandi.png`, `fat.png`, `speed.png`, `follow_me.png` | `data/icons/*.png` | prize icons |
+| `rain.png`, `boom.png`, `bandi.png`, `fat.png`, `speed.png`, `potion.png` | `data/icons/*.png` | prize icons |
 
 `normal_A.png` / `normal_B.png` from the reference are not used (the brush is
 recoloured per palette instead).

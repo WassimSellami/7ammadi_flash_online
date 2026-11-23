@@ -35,7 +35,7 @@ export interface PlayerState {
   mode: Mode;
   /** Fixed true palette index chosen in the lobby. */
   palette: number;
-  /** Current stamping palette index; `NO_PAINT` means the brush has no colour. */
+  /** Current stamping palette index; `NO_PAINT` means a potion victim is white. */
   paintIndex: number;
   jumping: boolean;
   jumpProgress: number;
@@ -58,6 +58,8 @@ export interface PlayerState {
   collisionJumpTicks: number;
   /** Per-player broken/slow timer (ticks). */
   collisionBrokenTicks: number;
+  /** Clock prize: victim cannot move while this is above zero (steering still works). */
+  frozenTicks: number;
   knockbackElapsed: number;
   knockbackDuration: number;
   knockbackStartY: number;
@@ -83,7 +85,7 @@ export interface PrizeState {
 export interface SimConfig {
   /** Palette per slot. Missing entries fall back to that slot's default. */
   palettes: readonly number[];
-  /** Playing ticks in the round. Defaults to 5040 (84 s at 60 Hz). */
+  /** Playing ticks in the round. Defaults to 6720 (112 s at 60 Hz). */
   roundTicks?: number;
   /** Ticks per countdown label. Defaults to 60 (1 s). */
   countdownTicksPerLabel?: number;
@@ -159,6 +161,7 @@ export type GameEvent = {
   | { type: "boom"; x: number; y: number; color: number; radius: number }
   | { type: "rain"; drops: Vec2[]; color: number; radius: number }
   | { type: "evil" }
+  | { type: "sparkle"; slot: number; x: number; y: number }
   | { type: "wall"; slot: number; x: number; y: number }
   | { type: "spawn"; kind: PrizeKind; x: number; y: number }
   | { type: "count"; label: string }
@@ -179,6 +182,7 @@ export const FLAG_BEATEN = 16;
 export const FLAG_KNOCKBACK = 32;
 export const FLAG_BROKEN = 64;
 export const FLAG_SQUASH = 128;
+export const FLAG_FROZEN = 256;
 
 export interface PlayerSnapshot {
   slot: SlotIndex;

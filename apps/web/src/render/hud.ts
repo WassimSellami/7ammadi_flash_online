@@ -5,14 +5,13 @@
  */
 
 import { Container, Graphics, Sprite, type Texture } from "pixi.js";
+import { PRIZE_TIME, ROUND_TIME } from "@flash/core";
 
 const HUD_HEIGHT = 74;
 const PANEL_CENTER_Y = HUD_HEIGHT / 2;
 const TRACK_X = 28;
 const TRACK_HEIGHT = 10;
 const ICON_SIZE = 46;
-const ROUND_TIME = 84;
-const PRIZE_TIME = 12;
 
 export interface HudState {
   remainingTicks: number;

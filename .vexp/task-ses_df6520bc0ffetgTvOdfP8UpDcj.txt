@@ -1,0 +1,5 @@
+change the code without anything else dont run any checks or tests..
+move the hud to the bottom, remove the ping and room code and make the sound and music levels adjustable, 
+reduce them now already : the music level by 50 % and the sound level by 20%
+and make them by default at their maxes
+and make the timeline nicer

@@ -27,8 +27,8 @@ export const JUMPING_TIME = 1.4;
 export const BANDI_TIME = 10;
 export const BEATEN_TIME = 5;
 export const KNOCKBACK_TIME = 0.2;
-export const PRIZE_TIME = 12;
-export const ROUND_TIME = 84;
+export const PRIZE_TIME = 28;
+export const ROUND_TIME = 112;
 export const RAIN_DELAY = 0.05;
 /** Deliberate change: 1 s per countdown label (reference used 0.1 s). */
 export const SYMBOL_TIME = 1;
@@ -41,7 +41,7 @@ export const SWING_UPPER_FACTOR = 0.5;
 export const JUMP_SHADOW_OFFSET = 0.47;
 export const IDLE_SHADOW_OFFSET = 0.47;
 
-export const RAIN_DROPS = 30;
+export const RAIN_DROPS = 45;
 
 export const P_RADIUS = 41;
 export const NORMAL_RADIUS = 36;
@@ -105,23 +105,37 @@ export function paletteRgb(index: number): readonly [number, number, number] {
 
 export const PRIZE_KINDS = [
   "rain",
-  "follow_me",
+  "potion",
   "bandi",
   "fat",
   "boom",
   "speed",
+  "clock",
 ] as const;
 
 export type PrizeKind = (typeof PRIZE_KINDS)[number];
 
 /**
  * Testing switch: force every prize spawn to one kind. `null` restores the
- * normal per-kind rotation. `follow_me` is enabled here for play-testing.
+ * normal per-kind rotation.
  */
-export const PRIZE_TEST_OVERRIDE: PrizeKind | null = "follow_me";
+export const PRIZE_TEST_OVERRIDE: PrizeKind | null = "clock";
 
-/** Paint sentinel: the brush has lost its colour and stamps nothing. */
+/** Extra paint-stamp radius applied to every movement mode. */
+export const PAINT_RADIUS_BONUS = 1;
+/** Uniform scaling applied to the painted stroke width. */
+export const PAINT_RADIUS_SCALE = 1.2;
+
+/** Painted circle radius for a player's physical radius. */
+export function paintRadius(radius: number): number {
+  return (radius + PAINT_RADIUS_BONUS) * PAINT_RADIUS_SCALE;
+}
+
+/** Paint sentinel: a potion victim's brush has no palette colour. */
 export const NO_PAINT = -1;
+
+/** Cream bristle colour of the brush sprite, reused for potion victims. */
+export const POTION_BRUSH_RGB = [247, 236, 208] as const;
 
 export const MODE_PRIZES: ReadonlySet<PrizeKind> = new Set<PrizeKind>([
   "speed",
@@ -135,14 +149,15 @@ export const PRIZE_LABELS: Record<PrizeKind, string> = {
   rain: "COLOR RAIN",
   boom: "BOOM!",
   bandi: "BANDI!",
-  follow_me: "FOLLOW ME",
+  potion: "HIT SOMEONE",
+  clock: "TIME FREEZE",
 };
 
 export const PRIZE_KIND_COUNT = new Set(PRIZE_KINDS).size;
 /**
- * Reference: `int((round_time - 1e-9) // prize_time)` = 6, because the epsilon
- * pushes 84 s below the 7th 12 s boundary. The plan text says 7; the reference
- * code (and the spawn condition `spawn_ms < round_time * 1000`) yields 6.
+ * 112 s round in four 28 s phases. Prizes spawn at 28 s, 56 s and 84 s; the
+ * last phase has no prize. The epsilon keeps the 84 s boundary from counting
+ * a fourth spawn (the spawn condition is `spawn_ms < round_time * 1000`).
  */
 export const PRIZES_PER_ROUND = Math.max(
   0,

@@ -1,5 +1,10 @@
 import { Texture } from "pixi.js";
-import { PAINT_PALETTE, PRIZE_KINDS, type PrizeKind } from "@flash/core";
+import {
+  PAINT_PALETTE,
+  POTION_BRUSH_RGB,
+  PRIZE_KINDS,
+  type PrizeKind,
+} from "@flash/core";
 import { ASSET_BASE } from "../config";
 
 export interface BrushLayers {
@@ -20,6 +25,8 @@ export interface GameAssets {
   soundOn: Texture;
   soundOff: Texture;
   whiteCircle: Texture;
+  /** Bandage overlay shown on a broken brush. */
+  bandage: Texture;
   /** `score_board.png` with its baked checkerboard backdrop removed. */
   scoreBoard: string;
 }
@@ -155,7 +162,7 @@ function buildBrushIcon(image: HTMLImageElement, paletteIndex: number): {
 
   const rgb =
     paletteIndex < 0
-      ? ([156, 160, 166] as const)
+      ? POTION_BRUSH_RGB
       : (PAINT_PALETTE[paletteIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb);
   const pixels = cropCtx.getImageData(0, 0, cropped.width, cropped.height);
   const data = pixels.data;
@@ -278,12 +285,17 @@ function maxTintCanvas(
   return canvas;
 }
 
-function prizeIconCanvas(image: HTMLImageElement, sharp = false): HTMLCanvasElement {
+function prizeIconCanvas(
+  image: HTMLImageElement,
+  sharp = false,
+  tintGold = true,
+): HTMLCanvasElement {
   const canvas = makeCanvas(80, 80);
   const ctx = context(canvas);
   // The bomb icon wants hard pixel edges instead of bilinear softening.
   if (sharp) ctx.imageSmoothingEnabled = false;
   ctx.drawImage(image, 0, 0, 80, 80);
+  if (!tintGold) return canvas;
   const pixels = ctx.getImageData(0, 0, 80, 80);
   const data = pixels.data;
   for (let index = 0; index < data.length; index += 4) {
@@ -341,7 +353,7 @@ export async function loadAssets(onProgress?: (fraction: number) => void): Promi
     brushIcons.push(built.icon.toDataURL("image/png"));
     onProgress?.((index + 1) / (PAINT_PALETTE.length + PRIZE_KINDS.length + 3));
   }
-  // Colourless brush used while `follow_me` strips a player's paint.
+  // Potion brush: the bristle paint takes the cream bristle colour.
   const colourless = buildBrushIcon(brushSource, -1);
   brushes.set(-1, swingLayers(colourless.icon));
 
@@ -349,17 +361,20 @@ export async function loadAssets(onProgress?: (fraction: number) => void): Promi
   for (const kind of PRIZE_KINDS) {
     const image = await loadImage(`${ASSET_BASE}/icons/${kind}.png`);
     const sharp = kind === "boom";
-    const texture = Texture.from(prizeIconCanvas(image, sharp));
+    const texture = Texture.from(
+      prizeIconCanvas(image, sharp, kind !== "potion" && kind !== "clock"),
+    );
     if (sharp) texture.source.scaleMode = "nearest";
     prizeIcons.set(kind, texture);
   }
   onProgress?.((PAINT_PALETTE.length + PRIZE_KINDS.length) / (PAINT_PALETTE.length + PRIZE_KINDS.length + 3));
 
-  const [music, volume, background, scoreBoard] = await Promise.all([
+  const [music, volume, background, scoreBoard, bandage] = await Promise.all([
     loadImage(`${ASSET_BASE}/icons/music.png`),
     loadImage(`${ASSET_BASE}/icons/volume.png`),
     loadImage(`${ASSET_BASE}/icons/bg.jpg`),
     loadImage(`${ASSET_BASE}/icons/score_board.png`),
+    loadImage(`${ASSET_BASE}/icons/bandate.png`),
   ]);
 
   return {
@@ -372,6 +387,7 @@ export async function loadAssets(onProgress?: (fraction: number) => void): Promi
     soundOn: Texture.from(maxTintCanvas(volume, 96, [255, 205, 94], false)),
     soundOff: Texture.from(maxTintCanvas(volume, 96, [118, 132, 156], true)),
     whiteCircle: circleTexture(),
+    bandage: Texture.from(bandage),
     scoreBoard: scoreBoardDataUrl(scoreBoard),
   };
 }

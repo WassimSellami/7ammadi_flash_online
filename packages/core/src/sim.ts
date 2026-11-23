@@ -16,6 +16,7 @@ import {
   IN_ANGLE_A,
   IN_ANGLE_B,
   NORMAL_MODE,
+  paintRadius,
   PRIZE_KINDS,
   PRIZE_LIFETIME_TICKS,
   PRIZE_TIME,
@@ -51,6 +52,7 @@ import {
   FLAG_BEATEN,
   FLAG_BROKEN,
   FLAG_FAT,
+  FLAG_FROZEN,
   FLAG_JUMPING,
   FLAG_KNOCKBACK,
   FLAG_SPEED,
@@ -190,7 +192,7 @@ function paintSuppressedQuirk(sim: SimState): boolean {
 }
 
 function canPlayerPaint(player: PlayerState): boolean {
-  // Colourless brushes (follow_me) stamp nothing; airborne brushes wait.
+  // Colourless brushes (potion victims) stamp nothing; airborne brushes wait.
   return (
     player.paintIndex >= 0 &&
     !(player.jumping || player.jumpingToWall || player.beaten)
@@ -206,7 +208,13 @@ function stampPaint(sim: SimState): void {
   if (paintSuppressedQuirk(sim)) return;
   for (const player of activePlayers(sim)) {
     if (!canPlayerPaint(player)) continue;
-    stampCircle(sim.mask, player.x, player.y, player.radius, player.paintIndex);
+    stampCircle(
+      sim.mask,
+      player.x,
+      player.y,
+      paintRadius(player.radius),
+      player.paintIndex,
+    );
   }
 }
 
@@ -280,6 +288,7 @@ function stepPlaying(sim: SimState, inputs: readonly InputState[]): void {
     if (!player.jumpingToWall) {
       changeAngle(player, inputs[player.slot] ?? NEUTRAL_INPUT, elapsed);
     }
+    if (player.frozenTicks > 0) player.frozenTicks -= 1;
     changeCoor(player, elapsed);
   }
 
@@ -396,6 +405,7 @@ function playerFlags(player: PlayerState): number {
   if (player.jumpingToWall) flags |= FLAG_KNOCKBACK;
   if (player.brokenVisual) flags |= FLAG_BROKEN;
   if (player.squashing) flags |= FLAG_SQUASH;
+  if (player.frozenTicks > 0) flags |= FLAG_FROZEN;
   return flags;
 }
 

@@ -28,15 +28,15 @@ export function playingSim(roundTicks = 240) {
 }
 
 describe("constants", () => {
-  it("keeps the reference prize budget (6 spawns, 1 per kind)", () => {
-    expect(PRIZES_PER_ROUND).toBe(6);
+  it("keeps the reference prize budget (3 spawns, 1 per kind)", () => {
+    expect(PRIZES_PER_ROUND).toBe(3);
     expect(PRIZES_PER_KIND).toBe(1);
-    expect(TOTAL_PRIZE_SLOTS).toBe(6);
-    expect(PRIZE_KINDS).toHaveLength(6);
+    expect(TOTAL_PRIZE_SLOTS).toBe(7);
+    expect(PRIZE_KINDS).toHaveLength(7);
   });
 
-  it("round length is 84 s at 60 Hz", () => {
-    expect(ROUND_TICKS).toBe(5040);
+  it("round length is 112 s at 60 Hz", () => {
+    expect(ROUND_TICKS).toBe(6720);
   });
 
   it("round-trips mode encoding", () => {

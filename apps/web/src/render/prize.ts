@@ -19,8 +19,8 @@ const GLOW_LIGHT: RGB = [
   Math.min(255, Math.round(GLOW[2] + (255 - GLOW[2]) * 0.66)),
 ];
 const ICON_SIZE = 80;
-/** Per-icon display scale: the bomb is drawn 10% smaller than the others. */
-const KIND_SCALE: Partial<Record<PrizeKind, number>> = { boom: 0.9 };
+/** Per-icon display scale: the bomb is smaller, the potion is larger. */
+const KIND_SCALE: Partial<Record<PrizeKind, number>> = { boom: 0.9, potion: 1.3 };
 
 type RGB = [number, number, number];
 
@@ -94,7 +94,9 @@ export class PrizeView {
     }
     scale *= KIND_SCALE[prize.kind] ?? 1;
     this.icon.scale.set(scale);
-    this.icon.tint = ICON_TINT;
+    // The potion and clock keep their original artwork colours; others use the gold.
+    this.icon.tint =
+      prize.kind === "potion" || prize.kind === "clock" ? 0xffffff : ICON_TINT;
 
     const border = Math.max(2, Math.round(ICON_SIZE * scale * 0.05));
     const offsets: Array<[number, number]> = [
