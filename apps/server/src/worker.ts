@@ -7,8 +7,13 @@
  * per-tick writes.
  */
 
-import { COUNTDOWN_TICKS_PER_LABEL, finishRound } from "@flash/core";
-import { RoomEngine, type RoomRecord } from "@flash/server-engine";import {
+import {
+  COUNTDOWN_TICKS_PER_LABEL,
+  PRIZE_TEST_OVERRIDE,
+  finishRound,
+} from "@flash/core";
+import { RoomEngine, type RoomRecord } from "@flash/server-engine";
+import {
   PROTOCOL_VERSION,
   encodeServerMessage,
   isValidRoomCode,
@@ -155,7 +160,10 @@ export class Room implements DurableObject {
   private async ensureEngine(code: string): Promise<RoomEngine> {
     if (this.engine) return this.engine;
     this.code = code || this.code;
-    const matchConfig = { readyTicks: COUNTDOWN_TICKS_PER_LABEL };
+    const matchConfig = {
+      readyTicks: COUNTDOWN_TICKS_PER_LABEL,
+      prizeOverride: PRIZE_TEST_OVERRIDE,
+    };
     this.engine = this.record
       ? RoomEngine.restore(this.record, { matchConfig, bots: true })
       : new RoomEngine({ code: this.code, matchConfig, bots: true });
@@ -282,6 +290,20 @@ export class Room implements DurableObject {
       }
       case "bot": {
         const result = engine.setBot(attachment.playerId, msg.slot, msg.enabled);
+        if (!result.ok) this.sendError(ws, result.code);
+        await this.persist();
+        this.broadcastState();
+        break;
+      }
+      case "mode": {
+        const result = engine.setBattleMode(attachment.playerId, msg.mode);
+        if (!result.ok) this.sendError(ws, result.code);
+        await this.persist();
+        this.broadcastState();
+        break;
+      }
+      case "team": {
+        const result = engine.setTeamPartner(attachment.playerId, msg.partner);
         if (!result.ok) this.sendError(ws, result.code);
         await this.persist();
         this.broadcastState();

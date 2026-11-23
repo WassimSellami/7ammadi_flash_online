@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   NEUTRAL_INPUT,
+  NO_PAINT,
   PRIZE_KINDS,
   PRIZES_PER_KIND,
   RAIN_DROPS,
@@ -114,7 +115,7 @@ describe("prize rewards", () => {
     expect(paintedCount(sim.mask, 2) - before).toBeGreaterThan(7000);
   });
 
-  it("follow_me paints both players in the winner's true color", () => {
+  it("follow_me strips every brush of its colour", () => {
     const sim = toPlaying();
     const [winner, loser] = sim.players;
     winner.paintIndex = 2;
@@ -122,8 +123,8 @@ describe("prize rewards", () => {
     sim.prize.kind = "follow_me";
     const events: GameEvent[] = [];
     rewardPrize(sim, winner, loser, events);
-    expect(winner.paintIndex).toBe(2);
-    expect(loser.paintIndex).toBe(2);
+    expect(winner.paintIndex).toBe(NO_PAINT);
+    expect(loser.paintIndex).toBe(NO_PAINT);
     expect(winner.powerup).toBe("follow_me");
     expect(events.some((event) => event.type === "evil")).toBe(true);
   });

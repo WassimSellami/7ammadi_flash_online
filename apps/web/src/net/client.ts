@@ -8,6 +8,7 @@
 import type { GameEvent, SlotIndex, Snapshot } from "@flash/core";
 import {
   PROTOCOL_VERSION,
+  type BattleMode,
   type ClientMessage,
   type ErrorCode,
   type PaintMessage,
@@ -187,6 +188,16 @@ export class OnlineClient {
   /** Host-only: turn the AI for a slot on or off. */
   setBot(slot: SlotIndex, enabled: boolean): void {
     this.send({ t: "bot", slot, enabled });
+  }
+
+  /** Host-only: switch single vs team battle. */
+  setMode(mode: BattleMode): void {
+    this.send({ t: "mode", mode });
+  }
+
+  /** Host-only: choose the teammate joining the host's team. */
+  setTeamPartner(partner: SlotIndex): void {
+    this.send({ t: "team", partner });
   }
 
   rematch(): void {

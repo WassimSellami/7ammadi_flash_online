@@ -10,7 +10,9 @@
  *    one full there-and-back per second;
  *  - prize: aim straight at the active prize (no sweep offset);
  *  - follow_me holder: keep its colours by fleeing every other brush;
- *  - bandi: charge the nearest opponent;
+ *  - bandi: hunt every opponent in turn, starting with the closest, then the
+ *    closest of the remaining ones (knocked-down players count as handled and
+ *    teammates are never chased, though a collision with one still counts);
  *  - everybody else plays normally (prizes, then roaming);
  *  - walls: reflect an outward heading back into the playfield early enough
  *    for the limited turn rate to avoid sliding along a border.
@@ -37,6 +39,8 @@ export const BOT_SWEEP_PERIOD_TICKS = 60;
 export const BOT_TURN_DEADBAND = 2.5;
 /** How far from a border the bot starts turning back in. */
 export const BOT_WALL_MARGIN = 0;
+/** Boundary tolerance used to detect the bot being pinned in a corner. */
+const BOT_CORNER_EPSILON = 2;
 
 const LEFT: InputState = { left: true, right: false };
 const RIGHT: InputState = { left: false, right: true };
@@ -68,6 +72,19 @@ function avoidWalls(player: PlayerState, desired: number, wide: boolean): number
   let vx = Math.cos(rad);
   let vy = Math.sin(rad);
   let bounced = false;
+
+  // A bot pinned in a corner can steer between two walls forever: both
+  // components get clamped and the reflected headings keep cancelling out.
+  // Escape by heading for the middle of the playfield until it is clear.
+  const atLeft = player.x <= margin + BOT_CORNER_EPSILON;
+  const atRight = player.x >= D_WIDTH - margin - BOT_CORNER_EPSILON;
+  const atTop = player.y <= PLAYFIELD_TOP + margin + BOT_CORNER_EPSILON;
+  const atBottom = player.y >= PLAYFIELD_BOTTOM - margin - BOT_CORNER_EPSILON;
+  if ((atLeft || atRight) && (atTop || atBottom)) {
+    const centerX = D_WIDTH / 2;
+    const centerY = (PLAYFIELD_TOP + PLAYFIELD_BOTTOM) / 2;
+    return (Math.atan2(centerY - player.y, centerX - player.x) * 180) / Math.PI;
+  }
 
   if (player.x <= margin && vx < edge) {
     vx = Math.max(0.6, Math.abs(vx));
@@ -105,12 +122,34 @@ function isFollowMeHolder(sim: SimState, player: PlayerState): boolean {
   });
 }
 
-function nearestOpponent(sim: SimState, player: PlayerState): PlayerState | null {
+/** Teammates are never bandi targets, though a brush collision still counts. */
+function teammateSlots(sim: SimState, player: PlayerState): SlotIndex[] {
+  if (!sim.teams) return [];
+  const roster = sim.teams.find((team) => team.includes(player.slot));
+  if (!roster) return [];
+  return roster.filter((slot) => slot !== player.slot) as SlotIndex[];
+}
+
+function chaseExclusions(
+  handled: readonly SlotIndex[],
+  mates: readonly SlotIndex[],
+): SlotIndex[] {
+  return [...handled, ...mates];
+}
+
+function nearestOpponent(
+  sim: SimState,
+  player: PlayerState,
+  exclude?: readonly SlotIndex[],
+  mates: readonly SlotIndex[] = teammateSlots(sim, player),
+): PlayerState | null {
   let best: PlayerState | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const slot of sim.activeSlots) {
     const other = sim.players[slot]!;
     if (other.slot === player.slot) continue;
+    if (mates.includes(other.slot)) continue;
+    if (exclude?.includes(other.slot)) continue;
     const distance = (other.x - player.x) ** 2 + (other.y - player.y) ** 2;
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -118,6 +157,75 @@ function nearestOpponent(sim: SimState, player: PlayerState): PlayerState | null
     }
   }
   return best;
+}
+
+/**
+ * Per-bot bandi chase bookkeeping: opponents already knocked down during the
+ * current bandi are skipped, so the bot sweeps the closest target, then the
+ * closest of the remaining ones instead of camping the same brush.
+ */
+export interface BotChaseState {
+  active: boolean;
+  handled: SlotIndex[];
+  target: SlotIndex | null;
+}
+
+export function createBotChaseState(): BotChaseState {
+  return { active: false, handled: [], target: null };
+}
+
+function bandiTarget(
+  sim: SimState,
+  player: PlayerState,
+  chase: BotChaseState,
+  mates: readonly SlotIndex[],
+): PlayerState | null {
+  if (!chase.active) {
+    chase.active = true;
+    chase.handled.length = 0;
+    chase.target = null;
+  }
+  if (chase.target !== null) {
+    const current = sim.players[chase.target];
+    if (
+      !current ||
+      !sim.activeSlots.includes(current.slot) ||
+      current.slot === player.slot ||
+      mates.includes(current.slot) ||
+      current.jumpingToWall ||
+      current.brokenVisual
+    ) {
+      chase.handled.push(chase.target);
+      chase.target = null;
+    }
+  }
+  if (chase.target === null) {
+    let next = nearestOpponent(sim, player, chaseExclusions(chase.handled, mates), mates);
+    while (next && (next.jumpingToWall || next.brokenVisual)) {
+      chase.handled.push(next.slot);
+      next = nearestOpponent(sim, player, chaseExclusions(chase.handled, mates), mates);
+    }
+    if (next) {
+      chase.target = next.slot;
+    } else if (chase.handled.length > 0) {
+      // Every opponent was handled or is still down: start another sweep
+      // from the closest brush that is back on its feet.
+      chase.handled.length = 0;
+      let restart = nearestOpponent(sim, player, chaseExclusions([], mates), mates);
+      while (restart && (restart.jumpingToWall || restart.brokenVisual)) {
+        chase.handled.push(restart.slot);
+        restart = nearestOpponent(sim, player, chaseExclusions(chase.handled, mates), mates);
+      }
+      if (restart) {
+        chase.target = restart.slot;
+      } else {
+        // Nobody is available; roam instead of hovering over a downed brush.
+        chase.handled.length = 0;
+        chase.target = null;
+      }
+    }
+  }
+  return chase.target === null ? null : (sim.players[chase.target] ?? null);
 }
 
 /**
@@ -209,10 +317,19 @@ export function botInput(
   sim: SimState,
   slot: SlotIndex,
   baseAngle: number,
+  chase?: BotChaseState,
+  excludeSlots: readonly SlotIndex[] = [],
 ): InputState {
   if (sim.phase !== "playing") return NEUTRAL_INPUT;
   const player = sim.players[slot];
   if (!player || player.jumpingToWall) return NEUTRAL_INPUT;
+  const mates = [...new Set([...teammateSlots(sim, player), ...excludeSlots])];
+
+  if (!player.bandi && chase) {
+    chase.active = false;
+    chase.handled.length = 0;
+    chase.target = null;
+  }
 
   let desired: number;
   let wide = false;
@@ -220,7 +337,9 @@ export function botInput(
     // The holder keeps its colours by running away from every other brush.
     desired = fleeAngle(sim, player);
   } else if (player.bandi) {
-    const target = nearestOpponent(sim, player);
+    const target = chase
+      ? bandiTarget(sim, player, chase, mates)
+      : nearestOpponent(sim, player, undefined, mates);
     if (target) {
       desired = angleTo(player, target.x, target.y);
     } else if (sim.prize.active) {

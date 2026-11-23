@@ -91,6 +91,26 @@ function normalizeActiveSlots(value: number | readonly number[] | undefined): nu
   return [0, 1];
 }
 
+function normalizeTeams(
+  value: readonly (readonly number[])[] | null | undefined,
+  activeSlots: readonly number[],
+): readonly (readonly number[])[] | null {
+  if (!value || value.length !== 2) return null;
+  const active = new Set(activeSlots);
+  const teams: number[][] = [];
+  for (const roster of value) {
+    const slots: number[] = [];
+    for (const slot of roster) {
+      if (active.has(slot) && !slots.includes(slot)) slots.push(slot);
+    }
+    if (slots.length === 0) return null;
+    teams.push(slots);
+  }
+  const [first, second] = teams;
+  if (first.some((slot) => second!.includes(slot))) return null;
+  return teams;
+}
+
 export function createSim(config: SimConfig): SimState {
   const palettes = SLOT_INDICES.map(
     (slot) => config.palettes[slot] ?? DEFAULT_SLOT_PALETTES[slot]!,
@@ -102,6 +122,7 @@ export function createSim(config: SimConfig): SimState {
   const seedText =
     config.seed ?? `sim|${palettes.join(",")}|${roundTicks}`;
   const activeSlots = normalizeActiveSlots(config.activeSlots);
+  const teams = normalizeTeams(config.teams, activeSlots);
 
   const players = SLOT_INDICES.map((slot) => {
     const offset: 1 | 2 = slot === 1 ? 2 : 1;
@@ -127,6 +148,8 @@ export function createSim(config: SimConfig): SimState {
     phase: "countdown",
     palettes,
     activeSlots,
+    teams,
+    prizeOverride: config.prizeOverride ?? null,
     tick: 0,
     countdownTicks: 0,
     countdownReadyTicks: readyTicks,
@@ -167,8 +190,11 @@ function paintSuppressedQuirk(sim: SimState): boolean {
 }
 
 function canPlayerPaint(player: PlayerState): boolean {
-  // Brushes in the air after a collision stop stamping until they land.
-  return !(player.jumping || player.jumpingToWall || player.beaten);
+  // Colourless brushes (follow_me) stamp nothing; airborne brushes wait.
+  return (
+    player.paintIndex >= 0 &&
+    !(player.jumping || player.jumpingToWall || player.beaten)
+  );
 }
 
 export function paintFlag(sim: SimState): boolean {
@@ -311,6 +337,27 @@ export function finishRound(
     winner = forcedWinner;
   } else if (reason === "abandoned") {
     winner = null;
+  } else if (sim.teams) {
+    // Team battle: compare the combined paint of each team, then award the
+    // winning team's best individual slot (clients share the trophy).
+    const totals = sim.teams.map((team) =>
+      team.reduce((sum, slot) => sum + (sim.players[slot]?.score ?? 0), 0),
+    );
+    if (totals[0] === totals[1]) {
+      winner = null;
+    } else {
+      const winning = totals[0]! > totals[1]! ? sim.teams[0]! : sim.teams[1]!;
+      let best = -1;
+      let bestSlot: number | null = null;
+      for (const slot of winning) {
+        const player = sim.players[slot];
+        if (player && player.score > best) {
+          best = player.score;
+          bestSlot = player.slot;
+        }
+      }
+      winner = bestSlot;
+    }
   } else {
     let best = -1;
     let bestSlot: number | null = null;

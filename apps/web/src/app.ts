@@ -68,6 +68,8 @@ export class FlashApp {
   private lobbyStart: HTMLButtonElement | null = null;
   private lobbyWait: HTMLElement | null = null;
   private lobbyHint: HTMLElement | null = null;
+  private lobbyModeButtons: { single: HTMLButtonElement; teams: HTMLButtonElement } | null =
+    null;
 
   async start(): Promise<void> {
     registerServiceWorker();
@@ -170,6 +172,7 @@ export class FlashApp {
     // The arcade HUD bar stays up during countdown, play and the score scroll.
     const inArena = screen === "game" || screen === "result";
     this.renderer.setHudEnabled(inArena);
+    this.renderer.setActorsVisible(screen !== "result");
     this.renderer.setGameVisible(inArena);
   }
 
@@ -454,7 +457,7 @@ export class FlashApp {
     header.append(el("h2", undefined, "Room"), el("span", "badge", "waiting"));
     screen.append(header, el("div", "code", room));
 
-    const actions = el("div", "row");
+    const actions = el("div", "row lobby-actions");
     actions.style.margin = "14px 0 20px";
     actions.append(
       button("Copy invite link", () => {
@@ -473,16 +476,7 @@ export class FlashApp {
     );
     screen.append(actions);
 
-    const slots = el("div", "slot-list");
-    this.lobbyRows = [];
-    for (let index = 0; index < 4; index += 1) {
-      const row = this.createSlotRow();
-      this.lobbyRows.push(row);
-      slots.append(row.root);
-    }
-    screen.append(el("h3", undefined, "Players (2–4)"), slots);
-
-    const paletteBlock = el("div", "panel grid");
+    const paletteBlock = el("div", "panel lobby-palette");
     paletteBlock.style.marginTop = "16px";
     paletteBlock.append(el("h3", undefined, "Your color"));
     this.lobbyChosen = this.palette;
@@ -495,6 +489,32 @@ export class FlashApp {
     });
     paletteBlock.append(this.lobbySwatches);
     screen.append(paletteBlock);
+
+    const modePanel = el("div", "panel lobby-palette lobby-mode");
+    modePanel.style.marginTop = "12px";
+    modePanel.append(el("h3", undefined, "Battle mode"));
+    const modeRow = el("div", "row");
+    const singleButton = button("Single", () => this.online?.setMode("single"), {
+      className: "ghost mode-button",
+    });
+    const teamsButton = button("Teams", () => this.online?.setMode("teams"), {
+      className: "ghost mode-button",
+    });
+    this.lobbyModeButtons = { single: singleButton, teams: teamsButton };
+    modeRow.append(singleButton, teamsButton);
+    modePanel.append(modeRow);
+    screen.append(modePanel);
+
+    const slots = el("div", "slot-list");
+    this.lobbyRows = [];
+    for (let index = 0; index < 4; index += 1) {
+      const row = this.createSlotRow();
+      this.lobbyRows.push(row);
+      slots.append(row.root);
+    }
+    const playersTitle = el("h3", undefined, "Players (2–4)");
+    playersTitle.style.margin = "18px 0 8px";
+    screen.append(playersTitle, slots);
 
     const footer = el("div", "row");
     footer.style.marginTop = "18px";
@@ -525,7 +545,18 @@ export class FlashApp {
     const self = state.slots.find((slot) => slot.slot === state.you) ?? null;
     if (self) this.lobbyChosen = self.palette;
     const isHost = state.host !== null && state.you === state.host;
+    const teams = state.mode === "teams";
 
+    if (this.lobbyModeButtons) {
+      for (const [mode, item] of [
+        ["single", this.lobbyModeButtons.single],
+        ["teams", this.lobbyModeButtons.teams],
+      ] as const) {
+        item.disabled = !isHost;
+        item.classList.toggle("primary", state.mode === mode);
+        item.classList.toggle("ghost", state.mode !== mode);
+      }
+    }
     for (let index = 0; index < this.lobbyRows.length; index += 1) {
       const row = this.lobbyRows[index]!;
       const wire = state.slots.find((slot) => slot.slot === index) ?? null;
@@ -540,7 +571,7 @@ export class FlashApp {
         row.dot.style.border = "none";
         row.dot.style.boxShadow = "";
         row.name.textContent = wire.name;
-        row.state.textContent = wire.bot
+        const baseState = wire.bot
           ? "bot"
           : wire.slot === state.host
             ? "host"
@@ -551,9 +582,31 @@ export class FlashApp {
                 : wire.slot === state.you
                   ? "you"
                   : "not ready";
+        row.state.textContent =
+          teams && wire.team !== undefined
+            ? `${baseState} · team ${wire.team + 1}`
+            : baseState;
       }
 
-      // Hosts can toggle the AI for every slot but their own.
+      if (teams) {
+        // Team battle: the host picks which slot joins his team.
+        const canPick =
+          isHost &&
+          wire !== null &&
+          index !== state.you &&
+          state.host !== null &&
+          state.partner !== index;
+        row.control.hidden = !canPick;
+        if (canPick) {
+          row.control.textContent = "Partner";
+          row.control.title = "Put this player on your team";
+          row.control.onclick = () =>
+            this.online?.setTeamPartner(index as SlotIndex);
+        }
+        continue;
+      }
+
+      // Single battle: hosts can toggle the AI for every slot but their own.
       const canToggle = isHost && index !== state.you && (!wire || wire.bot);
       row.control.hidden = !canToggle;
       if (canToggle) {
@@ -595,9 +648,7 @@ export class FlashApp {
             : "Waiting for another player…"
           : !allReady
             ? "Everyone in the room must be ready before the host can start."
-            : isHost
-              ? "Everyone is ready — start when you are."
-              : "";
+            : "";
     }
   }
 
@@ -710,6 +761,17 @@ export class FlashApp {
     }));
   }
 
+  /** Slots that share the trophy with `slot` (both teammates in team battle). */
+  private teamMembers(slot: number): number[] {
+    const state = this.onlineState;
+    if (state?.mode !== "teams") return [slot];
+    const wire = state.slots.find((candidate) => candidate.slot === slot) ?? null;
+    if (!wire || wire.team === undefined) return [slot];
+    return state.slots
+      .filter((candidate) => candidate.team === wire.team)
+      .map((candidate) => candidate.slot);
+  }
+
   private showResult(): void {
     this.setScreen("result");
     this.audio.stopMusic();
@@ -719,6 +781,8 @@ export class FlashApp {
     const scores = players.map((player) => player.score);
     const winner = this.result?.winner ?? this.latestSnapshot?.win ?? null;
     const reason = this.result?.reason;
+    const teams = this.onlineState?.mode === "teams";
+    const winnerSlots = winner === null ? [] : this.teamMembers(winner);
 
     const veil = el("div", "pause-veil results-veil");
     const scroll = el("div", "scroll-panel result-scroll");
@@ -728,7 +792,9 @@ export class FlashApp {
     const rows = el("div", "result-rows");
     const values: HTMLElement[] = [];
     const trophies: HTMLImageElement[] = [];
-    content.append(el("h2", "result-title", "SINGLE BATTLE RESULTS"));
+    content.append(
+      el("h2", "result-title", teams ? "TEAM BATTLE RESULTS" : "SINGLE BATTLE RESULTS"),
+    );
     for (const player of players) {
       const row = el("div", "result-row");
       const brush = el("img", "result-brush");
@@ -743,7 +809,7 @@ export class FlashApp {
       line.append(label, percent);
       const trophy = el("img", "result-trophy");
       trophy.src = `${ASSET_BASE}/icons/trophy.png`;
-      trophy.alt = winner === player.slot ? "Winner" : "";
+      trophy.alt = winnerSlots.includes(player.slot) ? "Winner" : "";
       trophy.decoding = "async";
       trophies.push(trophy);
       row.append(brush, line, trophy);
@@ -774,14 +840,16 @@ export class FlashApp {
     scroll.append(content);
     veil.append(scroll);
     this.ui.append(veil);
-    const winnerRow = players.findIndex((player) => player.slot === winner);
+    const winnerRows = winnerSlots
+      .map((slot) => players.findIndex((player) => player.slot === slot))
+      .filter((index) => index >= 0);
     this.playResultSequence(
       players.length,
       scores,
       rows,
       values,
       trophies,
-      winnerRow >= 0 ? winnerRow : null,
+      winnerRows,
       actions,
     );
   }
@@ -800,7 +868,7 @@ export class FlashApp {
     rows: HTMLElement,
     values: readonly HTMLElement[],
     trophies: readonly HTMLImageElement[],
-    winner: number | null,
+    winners: readonly number[],
     actions: HTMLElement,
   ): void {
     const token = this.resultToken;
@@ -828,7 +896,7 @@ export class FlashApp {
     const trophyAt = 1700 + count * 1300 + 100;
     at(trophyAt, () => {
       this.audio.play("scoreTick");
-      if (winner !== null) trophies[winner]?.classList.add("pop");
+      for (const index of winners) trophies[index]?.classList.add("pop");
     });
 
     at(trophyAt + 1200, () => actions.classList.add("shown"));

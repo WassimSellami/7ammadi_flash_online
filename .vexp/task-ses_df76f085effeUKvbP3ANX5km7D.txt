@@ -1,0 +1,4 @@
+do only code changes, nothing else no test run no simulation nothing.
+add team battle mode, so inside the room the host can change battle mode to single or teams, the combined score of 2 colors will be the team score, to compare it to the other team score, both players receiive a trophy, same scoreboard layout, just they will both receive a trpohy and the title will change instead of single => team
+the host can choose with whom  he can play and that is the first team, the other team is the leftover 2 players,
+in teams mode there should be 4 players and the rest is bots no empty players like single mode

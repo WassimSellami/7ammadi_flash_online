@@ -19,11 +19,13 @@ import {
   createSim,
   encodeMaskRle,
   botInput,
+  createBotChaseState,
   randomBotHeading,
   reflectBotHeading,
   finishRound,
   serializeSnapshot,
   stepSim,
+  type BotChaseState,
   type GameEvent,
   type InputState,
   type RoundEndReason,
@@ -34,6 +36,7 @@ import {
 } from "@flash/core";
 import {
   defaultRoomConfig,
+  type BattleMode,
   type RoomConfigWire,
   type RoomPhase,
   type SlotWire,
@@ -137,6 +140,9 @@ export interface RoomRecord {
   code: string;
   matchNumber: number;
   slots: (SlotRecord | null)[];
+  /** Lobby battle mode and the host's chosen teammate (newer records only). */
+  mode?: BattleMode;
+  partner?: SlotIndex | null;
 }
 
 const DEFAULT_SLOT_PALETTES: readonly number[] = [
@@ -154,6 +160,13 @@ export class RoomEngine {
   lastActivityTick = 0;
   metrics: RoomMetrics = { ticks: 0, snapshots: 0, events: 0, matches: 0 };
 
+  /** Host-selected battle mode; rooms start in single battle. */
+  battleMode: BattleMode = "single";
+  /** Host's chosen teammate in team battle mode. */
+  private teamPartner: SlotIndex | null = null;
+  /** Frozen rosters for the running match, so results keep their teams. */
+  private matchTeams: [number[], number[]] | null = null;
+
   private sim: SimState | null = null;
   private matchNumber = 0;
   private readonly ttlTicks: number;
@@ -165,6 +178,10 @@ export class RoomEngine {
   private readonly rematchVotes = new Set<number>();
   private readonly botsEnabled: boolean;
   private readonly botBaseAngles: number[] = SLOT_INDICES.map(() => 0);
+  /** Per-bot bandi target rotation (closest first, then the remaining ones). */
+  private readonly botChase: BotChaseState[] = SLOT_INDICES.map(() =>
+    createBotChaseState(),
+  );
   /** Slots the host explicitly left empty in the lobby. */
   private readonly disabledBots = new Set<SlotIndex>();
 
@@ -197,10 +214,17 @@ export class RoomEngine {
     return null;
   }
 
-  /** Host can start once two or more connected players are ready. */
+  private get isTeamMode(): boolean {
+    return this.battleMode === "teams";
+  }
+
+  /** Host can start once two (or four in team battle) players are ready. */
   get canStart(): boolean {
     if (this.phase !== "lobby") return false;
     const present = this.connectedSlots();
+    if (this.isTeamMode) {
+      return present.length === MAX_PLAYERS && present.every((slot) => this.readyForStart(slot));
+    }
     return (
       present.length >= 2 && present.every((slot) => this.readyForStart(slot))
     );
@@ -311,10 +335,10 @@ export class RoomEngine {
   }
 
   /** Keeps every open slot playable while the room waits for humans. */
-  private fillBots(): void {
+  private fillBots(force = false): void {
     if (!this.botsEnabled) return;
     for (const slot of SLOT_INDICES) {
-      if (this.slots[slot] || this.disabledBots.has(slot)) continue;
+      if (this.slots[slot] || (!force && this.disabledBots.has(slot))) continue;
       this.slots[slot] = this.createBot(slot);
       this.stateChanged = true;
     }
@@ -360,6 +384,8 @@ export class RoomEngine {
       this.disabledBots.delete(target);
       if (!existing) this.slots[target] = this.createBot(target);
     } else {
+      // Team battle always fields four brushes, so no slot may stay empty.
+      if (this.isTeamMode) return { ok: false, code: "not_ready" };
       this.disabledBots.add(target);
       if (existing?.bot) this.slots[target] = null;
     }
@@ -367,6 +393,97 @@ export class RoomEngine {
     this.stateChanged = true;
     this.pendingReason = "ready";
     return { ok: true };
+  }
+
+  /**
+   * Host-only lobby control: switch between single and team battle. Team
+   * battle always fills the room with bots; the host then picks a teammate.
+   */
+  setBattleMode(
+    playerId: string,
+    mode: BattleMode,
+  ): { ok: true } | { ok: false; code: "not_joined" | "not_host" | "not_ready" } {
+    const caller = this.findByPlayerId(playerId);
+    if (!caller) return { ok: false, code: "not_joined" };
+    if (this.phase !== "lobby") return { ok: false, code: "not_ready" };
+    if (this.hostSlot !== caller.slot) return { ok: false, code: "not_host" };
+    if (this.battleMode === mode) return { ok: true };
+
+    this.touch();
+    this.battleMode = mode;
+    if (mode === "teams") {
+      this.disabledBots.clear();
+      this.ensureTeamSlots();
+      this.ensureTeamPartner();
+    }
+    this.stateChanged = true;
+    this.pendingReason = "ready";
+    return { ok: true };
+  }
+
+  /** Host-only: the teammate that joins the host's team. */
+  setTeamPartner(
+    playerId: string,
+    partner: SlotIndex,
+  ): { ok: true } | { ok: false; code: "not_joined" | "not_host" | "not_ready" | "protocol" } {
+    const caller = this.findByPlayerId(playerId);
+    if (!caller) return { ok: false, code: "not_joined" };
+    if (this.phase !== "lobby") return { ok: false, code: "not_ready" };
+    if (this.hostSlot !== caller.slot) return { ok: false, code: "not_host" };
+    if (!this.isTeamMode) return { ok: false, code: "not_ready" };
+    if (partner === caller.slot) return { ok: false, code: "protocol" };
+
+    this.touch();
+    this.teamPartner = partner;
+    this.stateChanged = true;
+    this.pendingReason = "ready";
+    return { ok: true };
+  }
+
+  /** Fills every slot in team battle, even when lobby bots are globally off. */
+  private ensureTeamSlots(): void {
+    for (const slot of SLOT_INDICES) {
+      if (this.slots[slot]) continue;
+      this.slots[slot] = this.createBot(slot);
+      this.stateChanged = true;
+    }
+    this.reassignBotPalettes();
+  }
+
+  /** Picks a default teammate and repairs it when that slot leaves. */
+  private ensureTeamPartner(): void {
+    if (!this.isTeamMode) {
+      this.teamPartner = null;
+      return;
+    }
+    const host = this.hostSlot;
+    if (host === null) return;
+    const partner = this.teamPartner;
+    if (
+      partner !== null &&
+      partner !== host &&
+      this.slots[partner] !== null
+    ) {
+      return;
+    }
+    this.teamPartner =
+      SLOT_INDICES.find((slot) => slot !== host && this.slots[slot] !== null) ?? null;
+  }
+
+  /** Team index per slot; running matches keep their frozen roster. */
+  private teamOfSlot(slot: SlotIndex): 0 | 1 | null {
+    const frozen = this.sim ? this.matchTeams : null;
+    if (frozen) {
+      if (frozen[0]!.includes(slot)) return 0;
+      if (frozen[1]!.includes(slot)) return 1;
+      return null;
+    }
+    if (!this.isTeamMode) return null;
+    this.ensureTeamPartner();
+    const host = this.hostSlot;
+    if (host === null) return null;
+    if (slot === host || slot === this.teamPartner) return 0;
+    return 1;
   }
 
   findByToken(token: string): RoomSlot | null {
@@ -449,8 +566,13 @@ export class RoomEngine {
     if (!slot) return { ok: false, code: "not_joined" };
     if (this.phase !== "lobby") return { ok: false, code: "not_ready" };
     if (this.hostSlot !== slot.slot) return { ok: false, code: "not_host" };
+    if (this.isTeamMode) {
+      this.ensureTeamSlots();
+      this.ensureTeamPartner();
+    }
     const present = this.connectedSlots();
-    if (present.length < 2) return { ok: false, code: "not_enough_players" };
+    const required = this.isTeamMode ? MAX_PLAYERS : 2;
+    if (present.length < required) return { ok: false, code: "not_enough_players" };
     if (present.some((candidate) => !this.readyForStart(candidate))) {
       return { ok: false, code: "not_ready" };
     }
@@ -515,8 +637,11 @@ export class RoomEngine {
       this.slots[slot.slot] = null;
       this.rematchVotes.clear();
       this.sim = null;
+      this.matchTeams = null;
       this.phase = "lobby";
       this.fillBots();
+      if (this.isTeamMode) this.ensureTeamSlots();
+      this.ensureTeamPartner();
       this.stateChanged = true;
       this.pendingReason = "left";
       return;
@@ -527,8 +652,11 @@ export class RoomEngine {
       if (this.connectedSlots().filter((candidate) => !candidate.bot).length === 0) {
         this.rematchVotes.clear();
         this.sim = null;
+        this.matchTeams = null;
         this.phase = "lobby";
         this.fillBots();
+        if (this.isTeamMode) this.ensureTeamSlots();
+        this.ensureTeamPartner();
         this.pendingReason = "left";
       } else if (!this.maybeStartRematch()) {
         this.pendingReason = "left";
@@ -590,7 +718,13 @@ export class RoomEngine {
                 this.botBaseAngles[slot] ?? 0,
               );
             }
-            return botInput(this.sim, slot, this.botBaseAngles[slot]!);
+            return botInput(
+              this.sim,
+              slot,
+              this.botBaseAngles[slot]!,
+              this.botChase[slot]!,
+              this.matchMatesFor(slot),
+            );
           }
           return this.effectiveInput(slot);
         });
@@ -661,8 +795,36 @@ export class RoomEngine {
     return { reason: "forfeit", winner: present[0]!.slot };
   }
 
+  /** Slots on the same team as `slot` for the frozen match roster. */
+  private matchMatesFor(slot: SlotIndex): SlotIndex[] {
+    if (!this.matchTeams) return [];
+    const roster = this.matchTeams.find((team) => team.includes(slot));
+    if (!roster) return [];
+    return roster.filter((candidate) => candidate !== slot) as SlotIndex[];
+  }
+
+  /** Team 0 is the host plus the chosen partner; the remaining slots form team 1. */
+  private buildTeams(active: readonly RoomSlot[]): [number[], number[]] | null {
+    const host = this.hostSlot;
+    if (host === null) return null;
+    const partner = this.teamPartner;
+    const first = [host, ...(partner !== null && partner !== host ? [partner] : [])];
+    const second = active
+      .map((slot) => slot.slot)
+      .filter((slot) => !first.includes(slot));
+    return [first, second];
+  }
+
   private startMatch(): void {
-    const active = this.connectedSlots();
+    if (this.isTeamMode) {
+      this.ensureTeamSlots();
+      this.ensureTeamPartner();
+    }
+    const active = this.isTeamMode
+      ? this.slots.filter((slot): slot is RoomSlot => slot !== null)
+      : this.connectedSlots();
+    const teams = this.isTeamMode ? this.buildTeams(active) : null;
+    this.matchTeams = teams;
     this.matchNumber += 1;
     this.metrics.matches += 1;
     for (const slot of this.slots) {
@@ -677,11 +839,13 @@ export class RoomEngine {
     this.sim = createSim({
       palettes,
       activeSlots: active.map((slot) => slot.slot),
+      ...(teams ? { teams } : {}),
       spawn: "cross",
       seed: `${this.options.seedPrefix ?? this.code}|m${this.matchNumber}|${palettes.join(",")}`,
       ...(this.options.matchConfig ?? {}),
     });
     for (const slot of active) {
+      this.botChase[slot.slot] = createBotChaseState();
       if (slot.bot) {
         // Roam on a random heading independent from the spawn direction.
         this.botBaseAngles[slot.slot] = randomBotHeading(
@@ -717,17 +881,20 @@ export class RoomEngine {
       (candidate): candidate is RoomSlot =>
         candidate !== null && candidate.slot !== slotIndex,
     ) ?? null;
-    const wire = (slot: RoomSlot | null): SlotWire | null =>
-      slot
-        ? {
-            slot: slot.slot,
-            name: slot.name,
-            palette: slot.palette,
-            ready: slot.ready,
-            connected: slot.connected,
-            ...(slot.bot ? { bot: true } : {}),
-          }
-        : null;
+    this.ensureTeamPartner();
+    const wire = (slot: RoomSlot | null): SlotWire | null => {
+      if (!slot) return null;
+      const team = this.teamOfSlot(slot.slot);
+      return {
+        slot: slot.slot,
+        name: slot.name,
+        palette: slot.palette,
+        ready: slot.ready,
+        connected: slot.connected,
+        ...(slot.bot ? { bot: true } : {}),
+        ...(team !== null ? { team } : {}),
+      };
+    };
     const reason = this.sim?.endReason ?? undefined;
     return {
       t: "state",
@@ -738,6 +905,8 @@ export class RoomEngine {
       slots: SLOT_INDICES.map((index) => wire(this.slots[index]!)).filter(
         (value): value is SlotWire => value !== null,
       ),
+      mode: this.battleMode,
+      partner: this.isTeamMode ? this.teamPartner : null,
       ...(reason ? { reason } : {}),
     };
   }
@@ -777,6 +946,8 @@ export class RoomEngine {
       code: this.code,
       matchNumber: this.matchNumber,
       slots: this.slots.map((slot) => toRecord(slot)),
+      mode: this.battleMode,
+      partner: this.teamPartner,
     };
   }
 
@@ -788,6 +959,8 @@ export class RoomEngine {
   static restore(record: RoomRecord, options: Omit<RoomOptions, "code"> = {}): RoomEngine {
     const engine = new RoomEngine({ ...options, code: record.code });
     engine.matchNumber = record.matchNumber;
+    engine.battleMode = record.mode === "teams" ? "teams" : "single";
+    engine.teamPartner = record.partner ?? null;
     for (const saved of record.slots) {
       if (!saved) continue;
       const slot: RoomSlot = {
@@ -812,6 +985,8 @@ export class RoomEngine {
       if (engine.slots[index]?.bot) engine.slots[index] = null;
     }
     engine.fillBots();
+    if (engine.isTeamMode) engine.ensureTeamSlots();
+    engine.ensureTeamPartner();
     engine.phase = "lobby";
     return engine;
   }

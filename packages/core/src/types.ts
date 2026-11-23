@@ -35,7 +35,7 @@ export interface PlayerState {
   mode: Mode;
   /** Fixed true palette index chosen in the lobby. */
   palette: number;
-  /** Current stamping palette index (`follow_me` can change it). */
+  /** Current stamping palette index; `NO_PAINT` means the brush has no colour. */
   paintIndex: number;
   jumping: boolean;
   jumpProgress: number;
@@ -96,6 +96,10 @@ export interface SimConfig {
   activeSlots?: number | readonly number[];
   /** Legacy spawns A-left/B-right; cross uses the four playfield midpoints. */
   spawn?: "legacy" | "cross";
+  /** Team rosters (two groups of slots). When set, scores are compared per team. */
+  teams?: readonly (readonly number[])[] | null;
+  /** Test hook: force every prize spawn to this kind instead of the rotation. */
+  prizeOverride?: PrizeKind | null;
   /** Seed text. Defaults to palettes + round length. */
   seed?: string;
 }
@@ -107,6 +111,10 @@ export interface SimState {
   palettes: number[];
   /** Room slot indices that take part in the match. */
   activeSlots: number[];
+  /** Team rosters when the match is a team battle; `null` for single battle. */
+  teams: readonly (readonly number[])[] | null;
+  /** Forced prize kind for testing, or `null` for the normal rotation. */
+  prizeOverride: PrizeKind | null;
   /** Absolute tick since the match started (countdown included). */
   tick: number;
   countdownTicks: number;

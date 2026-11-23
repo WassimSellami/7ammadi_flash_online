@@ -1,4 +1,4 @@
-import { COUNTDOWN_TICKS_PER_LABEL } from "@flash/core";
+import { COUNTDOWN_TICKS_PER_LABEL, PRIZE_TEST_OVERRIDE } from "@flash/core";
 import { startNodeServer } from "./node-server";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -16,6 +16,7 @@ const handle = await startNodeServer({
   ...(graceTicks ? { graceTicks } : {}),
   matchConfig: {
     readyTicks: countdownTicksPerLabel ?? COUNTDOWN_TICKS_PER_LABEL,
+    prizeOverride: PRIZE_TEST_OVERRIDE,
     ...(roundTicks ? { roundTicks } : {}),
     ...(countdownTicksPerLabel ? { countdownTicksPerLabel } : {}),
   },

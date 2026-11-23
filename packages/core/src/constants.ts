@@ -114,6 +114,15 @@ export const PRIZE_KINDS = [
 
 export type PrizeKind = (typeof PRIZE_KINDS)[number];
 
+/**
+ * Testing switch: force every prize spawn to one kind. `null` restores the
+ * normal per-kind rotation. `follow_me` is enabled here for play-testing.
+ */
+export const PRIZE_TEST_OVERRIDE: PrizeKind | null = "follow_me";
+
+/** Paint sentinel: the brush has lost its colour and stamps nothing. */
+export const NO_PAINT = -1;
+
 export const MODE_PRIZES: ReadonlySet<PrizeKind> = new Set<PrizeKind>([
   "speed",
   "fat",

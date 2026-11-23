@@ -153,7 +153,10 @@ function buildBrushIcon(image: HTMLImageElement, paletteIndex: number): {
     bounds.height,
   );
 
-  const rgb = PAINT_PALETTE[paletteIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb;
+  const rgb =
+    paletteIndex < 0
+      ? ([156, 160, 166] as const)
+      : (PAINT_PALETTE[paletteIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb);
   const pixels = cropCtx.getImageData(0, 0, cropped.width, cropped.height);
   const data = pixels.data;
   for (let index = 0; index < data.length; index += 4) {
@@ -275,9 +278,11 @@ function maxTintCanvas(
   return canvas;
 }
 
-function prizeIconCanvas(image: HTMLImageElement): HTMLCanvasElement {
+function prizeIconCanvas(image: HTMLImageElement, sharp = false): HTMLCanvasElement {
   const canvas = makeCanvas(80, 80);
   const ctx = context(canvas);
+  // The bomb icon wants hard pixel edges instead of bilinear softening.
+  if (sharp) ctx.imageSmoothingEnabled = false;
   ctx.drawImage(image, 0, 0, 80, 80);
   const pixels = ctx.getImageData(0, 0, 80, 80);
   const data = pixels.data;
@@ -336,11 +341,17 @@ export async function loadAssets(onProgress?: (fraction: number) => void): Promi
     brushIcons.push(built.icon.toDataURL("image/png"));
     onProgress?.((index + 1) / (PAINT_PALETTE.length + PRIZE_KINDS.length + 3));
   }
+  // Colourless brush used while `follow_me` strips a player's paint.
+  const colourless = buildBrushIcon(brushSource, -1);
+  brushes.set(-1, swingLayers(colourless.icon));
 
   const prizeIcons = new Map<PrizeKind, Texture>();
   for (const kind of PRIZE_KINDS) {
     const image = await loadImage(`${ASSET_BASE}/icons/${kind}.png`);
-    prizeIcons.set(kind, Texture.from(prizeIconCanvas(image)));
+    const sharp = kind === "boom";
+    const texture = Texture.from(prizeIconCanvas(image, sharp));
+    if (sharp) texture.source.scaleMode = "nearest";
+    prizeIcons.set(kind, texture);
   }
   onProgress?.((PAINT_PALETTE.length + PRIZE_KINDS.length) / (PAINT_PALETTE.length + PRIZE_KINDS.length + 3));
 

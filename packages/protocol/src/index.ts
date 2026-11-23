@@ -15,6 +15,9 @@ export const MAX_SLOTS = 4;
 
 export type RoomPhase = "lobby" | "countdown" | "playing" | "result";
 
+/** Host-selectable lobby rule: every colour for itself, or two teams of two. */
+export type BattleMode = "single" | "teams";
+
 export interface RoomConfigWire {
   roundSeconds: number;
   tickRate: number;
@@ -31,6 +34,8 @@ export interface SlotWire {
   connected: boolean;
   /** True when the slot is filled by the room AI. */
   bot?: boolean;
+  /** Team index (0 or 1) while the room is in team battle mode. */
+  team?: 0 | 1;
 }
 
 export interface JoinMessage {
@@ -63,6 +68,18 @@ export interface BotMessage {
   enabled: boolean;
 }
 
+/** Host-only lobby control: switch between single and team battle. */
+export interface ModeMessage {
+  t: "mode";
+  mode: BattleMode;
+}
+
+/** Host-only lobby control: choose the teammate joining the host's team. */
+export interface TeamMessage {
+  t: "team";
+  partner: SlotIndex;
+}
+
 export interface InputMessage {
   t: "input";
   seq: number;
@@ -90,6 +107,8 @@ export type ClientMessage =
   | ColorMessage
   | StartMessage
   | BotMessage
+  | ModeMessage
+  | TeamMessage
   | InputMessage
   | RematchMessage
   | LeaveMessage
@@ -133,6 +152,10 @@ export interface StateMessage {
   /** First other occupied slot, kept for older clients. */
   opponent: SlotWire | null;
   slots: SlotWire[];
+  /** Current lobby battle mode. */
+  mode: BattleMode;
+  /** Host's chosen teammate in team battle mode. */
+  partner: SlotIndex | null;
   reason?: RoundEndReason;
 }
 
@@ -214,6 +237,10 @@ export function isValidRoomCode(code: unknown): code is string {
   return typeof code === "string" && ROOM_CODE_PATTERN.test(code);
 }
 
+export function isValidBattleMode(mode: unknown): mode is BattleMode {
+  return mode === "single" || mode === "teams";
+}
+
 function isInt(value: unknown, min: number, max: number): value is number {
   return (
     typeof value === "number" &&
@@ -280,6 +307,16 @@ export function parseClientMessage(raw: string): ParseResult {
         ok: true,
         msg: { t: "bot", slot: msg.slot as SlotIndex, enabled: msg.enabled },
       };
+    }
+    case "mode": {
+      if (!isValidBattleMode(msg.mode)) return { ok: false, code: "protocol" };
+      return { ok: true, msg: { t: "mode", mode: msg.mode } };
+    }
+    case "team": {
+      if (!isInt(msg.partner, 0, MAX_SLOTS - 1)) {
+        return { ok: false, code: "protocol" };
+      }
+      return { ok: true, msg: { t: "team", partner: msg.partner as SlotIndex } };
     }
     case "input": {
       if (!isInt(msg.seq, 0, 2 ** 31) || !isInt(msg.tick, 0, 2 ** 31)) {

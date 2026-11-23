@@ -91,6 +91,7 @@ export class SceneRenderer {
   private ownSlot: number | null = null;
   private activeSlots = new Set<number>([0, 1]);
   private gameVisible = false;
+  private actorsVisible = true;
   private ownInputLeft = false;
   private ownInputRight = false;
   private pointer = { x: 0, y: 0, active: false };
@@ -195,7 +196,7 @@ export class SceneRenderer {
     this.activeSlots = new Set(slots);
     for (let slot = 0; slot < this.players.length; slot += 1) {
       this.players[slot]!.container.visible =
-        this.gameVisible && this.activeSlots.has(slot);
+        this.gameVisible && this.actorsVisible && this.activeSlots.has(slot);
     }
   }
 
@@ -203,16 +204,33 @@ export class SceneRenderer {
   setGameVisible(visible: boolean): void {
     this.gameVisible = visible;
     this.paint.container.visible = visible;
-    this.effects.container.visible = visible;
-    this.effects.labels.visible = visible;
-    this.prize.container.visible = visible;
+    this.effects.container.visible = visible && this.actorsVisible;
+    this.effects.labels.visible = visible && this.actorsVisible;
+    this.prize.container.visible = visible && this.actorsVisible;
     for (let slot = 0; slot < this.players.length; slot += 1) {
-      this.players[slot]!.container.visible = visible && this.activeSlots.has(slot);
+      this.players[slot]!.container.visible =
+        visible && this.actorsVisible && this.activeSlots.has(slot);
     }
     if (!visible) {
       this.audio.stopCountdown();
       this.countdown.visible = false;
     }
+  }
+
+  /**
+   * Results screen: keep the painted canvas on screen but remove the live
+   * brushes, prizes and transient effects so only the painting remains.
+   */
+  setActorsVisible(visible: boolean): void {
+    this.actorsVisible = visible;
+    this.effects.container.visible = this.gameVisible && visible;
+    this.effects.labels.visible = this.gameVisible && visible;
+    this.prize.container.visible = this.gameVisible && visible;
+    for (let slot = 0; slot < this.players.length; slot += 1) {
+      this.players[slot]!.container.visible =
+        this.gameVisible && visible && this.activeSlots.has(slot);
+    }
+    if (!visible) this.countdown.visible = false;
   }
 
   setLocalInput(left: boolean, right: boolean): void {
@@ -564,9 +582,9 @@ export class SceneRenderer {
           y: display.y,
           angle,
           radius: source.r,
-          // The brush sprite keeps its lobby palette even while `follow_me`
-          // changes the paint colour (reference brush icons are name-based).
-          colorIndex: this.palettes[slot] ?? source.c,
+          // `follow_me` strips the brush colour entirely; otherwise the sprite
+          // keeps its lobby palette (reference brush icons are name-based).
+          colorIndex: source.c < 0 ? -1 : (this.palettes[slot] ?? source.c),
           paintIndex: source.c,
           lift,
           squash,
@@ -608,6 +626,7 @@ export class SceneRenderer {
     if (snapshot.phase === "playing") this.effects.observe(observe, dt);
     this.effects.update(dt);
     this.prize.update(snapshot.prize, snapshot.tick, dt);
+    if (!this.actorsVisible) this.prize.container.visible = false;
     this.hud.update(
       {
         remainingTicks:

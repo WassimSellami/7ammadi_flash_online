@@ -466,6 +466,18 @@ function handleMessage(hub: RoomHub, socket: ClientSocket, data: RawData): void 
       hub.broadcastState(ctx.room);
       break;
     }
+    case "mode": {
+      const result = engine.setBattleMode(ctx.playerId, message.mode);
+      if (!result.ok) hub.sendError(socket, result.code);
+      hub.broadcastState(ctx.room);
+      break;
+    }
+    case "team": {
+      const result = engine.setTeamPartner(ctx.playerId, message.partner);
+      if (!result.ok) hub.sendError(socket, result.code);
+      hub.broadcastState(ctx.room);
+      break;
+    }
     case "input":
       engine.input(ctx.playerId, { left: message.left, right: message.right }, message.seq, message.tick);
       break;

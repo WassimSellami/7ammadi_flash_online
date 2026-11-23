@@ -106,7 +106,10 @@ export class PlayerView {
       sprite.pivot.set(ICON_SIZE / 2, pivotY);
       sprite.position.set(0, -ICON_SIZE / 2 + pivotY);
     }
-    const rgb = PAINT_PALETTE[colorIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb;
+    const rgb =
+      colorIndex < 0
+        ? ([156, 160, 166] as const)
+        : (PAINT_PALETTE[colorIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb);
     this.label.style.fill = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
   }
 
@@ -174,7 +177,10 @@ export class PlayerView {
     const radius = Math.round(extent + (5 + boost) * FX_SCALE);
     let ringAlpha = Math.round(130 + pulse * 90);
     if (expiring) ringAlpha = Math.min(255, ringAlpha + Math.round(45 * urgency));
-    const rgb = PAINT_PALETTE[state.paintIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb;
+    const rgb =
+      state.paintIndex < 0
+        ? ([156, 160, 166] as const)
+        : (PAINT_PALETTE[state.paintIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb);
     const color = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
 
     this.ring

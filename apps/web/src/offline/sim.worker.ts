@@ -11,6 +11,7 @@
 import {
   COUNTDOWN_TICKS_PER_LABEL,
   NEUTRAL_INPUT,
+  PRIZE_TEST_OVERRIDE,
   serializeSnapshot,
   stepSim,
   createSim,
@@ -116,6 +117,7 @@ function beginMatch(): void {
     palettes: initMessage.palettes,
     activeSlots: initMessage.activeSlots,
     readyTicks: COUNTDOWN_TICKS_PER_LABEL,
+    prizeOverride: PRIZE_TEST_OVERRIDE,
     seed: `${initMessage.seed}|m${matchCounter}`,
   });
   inputs = [NEUTRAL_INPUT, NEUTRAL_INPUT];

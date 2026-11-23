@@ -19,6 +19,8 @@ const GLOW_LIGHT: RGB = [
   Math.min(255, Math.round(GLOW[2] + (255 - GLOW[2]) * 0.66)),
 ];
 const ICON_SIZE = 80;
+/** Per-icon display scale: the bomb is drawn 10% smaller than the others. */
+const KIND_SCALE: Partial<Record<PrizeKind, number>> = { boom: 0.9 };
 
 type RGB = [number, number, number];
 
@@ -90,6 +92,7 @@ export class PrizeView {
     if (expiring) {
       scale += 0.07 * (0.5 + 0.5 * Math.sin(this.elapsed * 10));
     }
+    scale *= KIND_SCALE[prize.kind] ?? 1;
     this.icon.scale.set(scale);
     this.icon.tint = ICON_TINT;
 

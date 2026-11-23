@@ -597,8 +597,44 @@ input[type="text"][name="name"] {
 }
 
 .classic-page .slot {
+  min-height: 58px;
+  padding: 8px 14px;
   background: rgba(255, 252, 235, 0.68);
   border: 2px solid rgba(74, 39, 11, 0.28);
+}
+
+.classic-page .slot button {
+  min-height: 38px;
+  padding: 6px 14px;
+}
+
+.lobby-actions {
+  justify-content: center;
+}
+
+.classic-page .lobby-palette {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 18px;
+}
+
+.lobby-palette h3 {
+  flex: none;
+  margin: 0;
+}
+
+.classic-page .lobby-palette .swatch {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.classic-page .lobby-mode .mode-button {
+  min-height: 38px;
+  padding: 4px 16px;
+  border-radius: 10px;
+  box-shadow: 0 3px 0 #99591a;
 }
 
 .classic-page .slot .name {

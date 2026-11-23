@@ -12,6 +12,7 @@ import {
   PLAYFIELD_BOTTOM,
   PLAYFIELD_TOP,
   PRIZE_DIS,
+  NO_PAINT,
   PRIZE_KINDS,
   PRIZE_LABELS,
   PRIZES_PER_KIND,
@@ -113,15 +114,20 @@ export function generatePrizePosition(sim: SimState): Vec2 {
 /** `Prize.gen_prize`, including the per-kind budget. */
 export function generatePrize(sim: SimState, events: GameEvent[]): void {
   const prize = sim.prize;
-  const eligible = PRIZE_KINDS.filter(
-    (kind) => (prize.counts[kind] ?? 0) < PRIZES_PER_KIND,
-  );
-  if (eligible.length === 0) {
-    prize.active = false;
-    return;
+  let kind: (typeof PRIZE_KINDS)[number];
+  if (sim.prizeOverride) {
+    // Testing switch: bypass the per-kind budget and always spawn one kind.
+    kind = sim.prizeOverride;
+  } else {
+    const eligible = PRIZE_KINDS.filter(
+      (candidate) => (prize.counts[candidate] ?? 0) < PRIZES_PER_KIND,
+    );
+    if (eligible.length === 0) {
+      prize.active = false;
+      return;
+    }
+    kind = sim.rng.choice(eligible);
   }
-
-  const kind = sim.rng.choice(eligible);
   prize.counts[kind] = (prize.counts[kind] ?? 0) + 1;
   prize.kind = kind;
   prize.ageMs = 0;
@@ -223,10 +229,8 @@ export function rewardPrize(
       break;
     case "follow_me":
       events.push({ tick: sim.tick, type: "evil" });
-      winner.paintIndex = winner.palette;
-      for (const other of activePlayers(sim)) {
-        if (other !== winner) other.paintIndex = winner.palette;
-      }
+      // Every brush loses its colour instead of copying the winner's palette.
+      for (const brush of activePlayers(sim)) brush.paintIndex = NO_PAINT;
       if (winner.powerup === null && !winner.bandi) {
         winner.powerup = "follow_me";
       }
