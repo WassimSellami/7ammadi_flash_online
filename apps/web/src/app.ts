@@ -541,13 +541,15 @@ export class FlashApp {
         row.name.textContent = wire.name;
         row.state.textContent = wire.bot
           ? "bot"
-          : !wire.connected
-            ? "reconnecting"
-            : wire.ready
-              ? "ready"
-              : wire.slot === state.you
-                ? "you"
-                : "not ready";
+          : wire.slot === state.host
+            ? "host"
+            : !wire.connected
+              ? "reconnecting"
+              : wire.ready
+                ? "ready"
+                : wire.slot === state.you
+                  ? "you"
+                  : "not ready";
       }
 
       // Hosts can toggle the AI for every slot but their own.
@@ -569,13 +571,15 @@ export class FlashApp {
     }
 
     const connected = state.slots.filter((slot) => slot.connected);
-    const allReady =
-      connected.length >= 2 && connected.every((slot) => slot.ready);
+    // The host never readies up; only every other human and the bots matter.
+    const required = connected.filter((slot) => slot.slot !== state.host);
+    const allReady = connected.length >= 2 && required.every((slot) => slot.ready);
 
     if (this.lobbyReady) {
       const label = this.lobbyReady.firstElementChild;
       if (label) label.textContent = self?.ready ? "Ready!" : "I'm ready";
       this.lobbyReady.disabled = self?.ready ?? false;
+      this.lobbyReady.hidden = isHost;
     }
     if (this.lobbyStart) {
       this.lobbyStart.hidden = !isHost;
@@ -588,11 +592,11 @@ export class FlashApp {
           ? isHost
             ? "Add a bot or wait for another player before starting."
             : "Waiting for another player…"
-          : allReady
-            ? isHost
+          : !allReady
+            ? "Everyone in the room must be ready before the host can start."
+            : isHost
               ? "Everyone is ready — start when you are."
-              : "Everyone is ready — waiting for the host."
-            : "Everyone in the room must be ready before the host can start.";
+              : "";
     }
   }
 
@@ -719,14 +723,12 @@ export class FlashApp {
     const scroll = el("div", "scroll-panel result-scroll");
     const content = el("div", "result-content");
     if (players.length > 2) content.classList.add("many");
-    content.append(el("h2", "result-title", "Battle Results"));
 
     const rows = el("div", "result-rows");
     const values: HTMLElement[] = [];
     const trophies: HTMLImageElement[] = [];
     for (const player of players) {
       const row = el("div", "result-row");
-      if (winner === player.slot) row.classList.add("winner");
       const brush = el("img", "result-brush");
       brush.src = this.brushIcon(player.palette);
       brush.alt = "";

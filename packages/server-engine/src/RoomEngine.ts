@@ -201,8 +201,13 @@ export class RoomEngine {
     if (this.phase !== "lobby") return false;
     const present = this.connectedSlots();
     return (
-      present.length >= 2 && present.every((slot) => slot.ready)
+      present.length >= 2 && present.every((slot) => this.readyForStart(slot))
     );
+  }
+
+  /** The host is implicitly ready; bots are always ready. */
+  private readyForStart(slot: RoomSlot): boolean {
+    return slot.bot || slot.slot === this.hostSlot || slot.ready;
   }
 
   private connectedSlots(): RoomSlot[] {
@@ -445,7 +450,7 @@ export class RoomEngine {
     if (this.hostSlot !== slot.slot) return { ok: false, code: "not_host" };
     const present = this.connectedSlots();
     if (present.length < 2) return { ok: false, code: "not_enough_players" };
-    if (present.some((candidate) => !candidate.ready)) {
+    if (present.some((candidate) => !this.readyForStart(candidate))) {
       return { ok: false, code: "not_ready" };
     }
     this.touch();

@@ -97,6 +97,8 @@ export class SceneRenderer {
   private predictedAngle = 180;
   private countdownAge = 0;
   private countdownLabel = -1;
+  /** Countdown only stamps the initial brush marks, once per slot. */
+  private readonly countdownStamped = new Set<number>();
   private readonly pendingPaint: Array<{
     x: number;
     y: number;
@@ -276,6 +278,7 @@ export class SceneRenderer {
     this.countdown.visible = false;
     this.countdownLabel = -1;
     this.countdownAge = 0;
+    this.countdownStamped.clear();
     for (const display of this.displays) display.bandiStarted = null;
   }
 
@@ -505,15 +508,22 @@ export class SceneRenderer {
     // Stamp the cosmetic paint layer every rendered frame from the displayed
     // (predicted/interpolated) positions, not from 20 Hz snapshots. This keeps
     // the stroke growing at 60 fps exactly like the local pygame build.
-    const paintPhase =
-      snapshot.phase === "countdown" || snapshot.phase === "playing";
+    // During the countdown only the initial brush mark is stamped: connecting
+    // frames there would smear a trail between spawn and a stale position.
     for (const source of snapshot.players) {
       const slot = source.slot;
       const display = this.displays[slot]!;
       const name = PLAYER_NAMES[slot]!;
       const color = paletteColor(source.c);
-      if (paintPhase && source.pt && (source.fl & FLAG_KNOCKBACK) === 0) {
+      const canPaint = source.pt === true && (source.fl & FLAG_KNOCKBACK) === 0;
+      if (snapshot.phase === "playing" && canPaint) {
         this.paint.stampTrail(name, display.x, display.y, source.r, color);
+      } else if (snapshot.phase === "countdown") {
+        if (canPaint && !this.countdownStamped.has(slot)) {
+          this.paint.stamp(source.x, source.y, source.r, color);
+          this.countdownStamped.add(slot);
+        }
+        this.paint.snap(name, source.x, source.y, source.r, color);
       } else {
         this.paint.snap(name, display.x, display.y, source.r, color);
       }
@@ -593,7 +603,9 @@ export class SceneRenderer {
       });
     }
 
-    this.effects.observe(observe, dt);
+    // Only live play leaves cosmetic motion trails; the countdown must stay
+    // clean even if a display frame has to snap to a spawn point.
+    if (snapshot.phase === "playing") this.effects.observe(observe, dt);
     this.effects.update(dt);
     this.prize.update(snapshot.prize, snapshot.tick, dt);
     this.hud.update(
