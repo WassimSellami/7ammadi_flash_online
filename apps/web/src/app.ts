@@ -496,8 +496,9 @@ export class FlashApp {
     paletteBlock.append(this.lobbySwatches);
     screen.append(paletteBlock);
 
-    const footer = el("div", "row between");
+    const footer = el("div", "row");
     footer.style.marginTop = "18px";
+    footer.style.justifyContent = "center";
     this.lobbyReady = button("I'm ready", () => {
       this.online?.ready(this.lobbyChosen);
     }, { className: "primary" });

@@ -1,0 +1,1 @@
+on a rematch when a player leaves, and the present players clicked rematch the game should start again, the left player has leaved, why consider it. fix this bug briefly dont think too much and dont test it or run anay test afterward.

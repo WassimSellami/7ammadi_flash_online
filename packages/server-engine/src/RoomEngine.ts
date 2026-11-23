@@ -485,26 +485,32 @@ export class RoomEngine {
     this.rematchVotes.add(slot.slot);
     this.touch();
 
-    const required = this.connectedSlots()
-      .filter((candidate) => !candidate.bot)
-      .map((candidate) => candidate.slot);
-    const started =
-      required.length >= 1 &&
-      required.every((vote) => this.rematchVotes.has(vote));
-    if (started) {
-      this.startMatch();
-    } else {
+    const started = this.maybeStartRematch();
+    if (!started) {
       this.stateChanged = true;
       this.pendingReason = "rematch";
     }
     return { started };
   }
 
+  /** Rematch only waits for players who are still connected. */
+  private maybeStartRematch(): boolean {
+    if (this.phase !== "result") return false;
+    const required = this.connectedSlots()
+      .filter((candidate) => !candidate.bot)
+      .map((candidate) => candidate.slot);
+    const started =
+      required.length >= 1 &&
+      required.every((vote) => this.rematchVotes.has(vote));
+    if (started) this.startMatch();
+    return started;
+  }
+
   leave(playerId: string): void {
     const slot = this.findByPlayerId(playerId);
     if (!slot) return;
     this.touch();
-    if (this.phase === "lobby" || this.phase === "result") {
+    if (this.phase === "lobby") {
       this.slots[slot.slot] = null;
       this.rematchVotes.clear();
       this.sim = null;
@@ -514,6 +520,21 @@ export class RoomEngine {
       this.pendingReason = "left";
       return;
     }
+    if (this.phase === "result") {
+      this.slots[slot.slot] = null;
+      this.rematchVotes.delete(slot.slot);
+      if (this.connectedSlots().filter((candidate) => !candidate.bot).length === 0) {
+        this.rematchVotes.clear();
+        this.sim = null;
+        this.phase = "lobby";
+        this.fillBots();
+        this.pendingReason = "left";
+      } else if (!this.maybeStartRematch()) {
+        this.pendingReason = "left";
+      }
+      this.stateChanged = true;
+      return;
+    }
     this.markDisconnected(slot);
   }
 
@@ -521,6 +542,10 @@ export class RoomEngine {
     const slot = this.findByPlayerId(playerId);
     if (!slot || !slot.connected) return;
     this.markDisconnected(slot);
+    if (this.phase === "result") {
+      this.rematchVotes.delete(slot.slot);
+      this.maybeStartRematch();
+    }
   }
 
   private markDisconnected(slot: RoomSlot): void {

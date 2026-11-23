@@ -167,8 +167,8 @@ function paintSuppressedQuirk(sim: SimState): boolean {
 }
 
 function canPlayerPaint(player: PlayerState): boolean {
-  // Jumping does not stop stamping in the reference; only knockback/beaten.
-  return !(player.jumpingToWall || player.beaten);
+  // Brushes in the air after a collision stop stamping until they land.
+  return !(player.jumping || player.jumpingToWall || player.beaten);
 }
 
 export function paintFlag(sim: SimState): boolean {

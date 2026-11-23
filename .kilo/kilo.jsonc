@@ -1,0 +1,16 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "mcp": {
+    "vexp": {
+      "type": "local",
+      "command": [
+        "node",
+        "c:\\Users\\Wassim Sellami\\.vscode\\extensions\\vexp.vexp-vscode-3.5.1-win32-x64\\dist\\mcp-server.cjs"
+      ],
+      "env": {
+        "VEXP_WORKSPACE": "d:\\Academique\\Coding\\Python\\Pycharm Codes\\Final Projects\\7ammadi_flash_online"
+      },
+      "enabled": true
+    }
+  }
+}
