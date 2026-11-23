@@ -10,10 +10,10 @@
 export const D_WIDTH = 1920;
 export const D_HEIGHT = 1080;
 
-/** Logical HUD strip at the top of the playfield. */
+/** Logical HUD strip docked at the bottom of the screen. */
 export const HUD_HEIGHT = 74;
-export const PLAYFIELD_TOP = HUD_HEIGHT;
-export const PLAYFIELD_BOTTOM = D_HEIGHT;
+export const PLAYFIELD_TOP = 0;
+export const PLAYFIELD_BOTTOM = D_HEIGHT - HUD_HEIGHT;
 export const PLAYFIELD_HEIGHT = PLAYFIELD_BOTTOM - PLAYFIELD_TOP;
 
 /** Milliseconds of simulated time advanced by one tick. */
@@ -119,7 +119,7 @@ export type PrizeKind = (typeof PRIZE_KINDS)[number];
  * Testing switch: force every prize spawn to one kind. `null` restores the
  * normal per-kind rotation.
  */
-export const PRIZE_TEST_OVERRIDE: PrizeKind | null = "clock";
+export const PRIZE_TEST_OVERRIDE: PrizeKind | null = null;
 
 /** Extra paint-stamp radius applied to every movement mode. */
 export const PAINT_RADIUS_BONUS = 1;

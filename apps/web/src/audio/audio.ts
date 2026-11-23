@@ -21,7 +21,10 @@ const SFX: Record<string, SfxSpec> = {
   scoreTick: { file: "beep.mp3", volume: 0.55 },
 };
 
-const MUSIC_VOLUME = 0.2;
+/** Music ceiling: the reference 0.2 lowered by 50%. */
+const MUSIC_VOLUME = 0.1;
+/** Every sound sample is lowered by 20% before the user's level is applied. */
+const SFX_VOLUME = 0.8;
 const POOL_SIZE = 5;
 
 export type SfxName = keyof typeof SFX;
@@ -33,6 +36,9 @@ const COUNTDOWN_SFX: readonly CountdownSfx[] = ["s_3", "s_2", "s_1", "s_go"];
 export class AudioManager {
   sfxEnabled: boolean;
   musicEnabled: boolean;
+  /** User levels in [0, 1]; 1 is the reduced maximum. */
+  musicLevel: number;
+  sfxLevel: number;
   private unlocked = false;
   private pools = new Map<string, HTMLAudioElement[]>();
   private poolIndex = new Map<string, number>();
@@ -44,12 +50,14 @@ export class AudioManager {
   constructor() {
     this.sfxEnabled = readFlag(STORAGE.sfx, true);
     this.musicEnabled = readFlag(STORAGE.music, true);
+    this.musicLevel = readLevel(STORAGE.musicLevel);
+    this.sfxLevel = readLevel(STORAGE.sfxLevel);
     for (const [name, spec] of Object.entries(SFX)) {
       const pool: HTMLAudioElement[] = [];
       for (let i = 0; i < POOL_SIZE; i += 1) {
         const audio = new Audio(`${ASSET_BASE}/sounds/${spec.file}`);
         audio.preload = "none";
-        audio.volume = spec.volume;
+        audio.volume = this.sfxVolume(spec.volume);
         pool.push(audio);
       }
       this.pools.set(name, pool);
@@ -58,17 +66,25 @@ export class AudioManager {
     for (const name of COUNTDOWN_SFX) {
       const audio = new Audio(`${ASSET_BASE}/sounds/${SFX[name]!.file}`);
       audio.preload = "auto";
-      audio.volume = SFX[name]!.volume;
+      audio.volume = this.sfxVolume(SFX[name]!.volume);
       audio.load();
       this.countdown.set(name, audio);
     }
     if (this.musicEnabled) this.music = this.createMusic();
   }
 
+  private sfxVolume(base: number): number {
+    return base * SFX_VOLUME * this.sfxLevel;
+  }
+
+  private musicVolume(): number {
+    return MUSIC_VOLUME * this.musicLevel;
+  }
+
   private createMusic(): HTMLAudioElement {
     const audio = new Audio(`${ASSET_BASE}/sounds/play_music.mp3`);
     audio.loop = true;
-    audio.volume = MUSIC_VOLUME;
+    audio.volume = this.musicVolume();
     audio.preload = "none";
     return audio;
   }
@@ -121,7 +137,7 @@ export class AudioManager {
   playRain(): void {
     if (!this.sfxEnabled || !this.unlocked) return;
     const audio = new Audio(`${ASSET_BASE}/sounds/gun.mp3`);
-    audio.volume = SFX.gun!.volume;
+    audio.volume = this.sfxVolume(SFX.gun!.volume);
     audio.preservesPitch = false;
     audio.playbackRate = 0.32;
     try {
@@ -162,6 +178,25 @@ export class AudioManager {
     this.music?.pause();
   }
 
+  setMusicLevel(level: number): void {
+    this.musicLevel = clamp01(level);
+    writeLevel(STORAGE.musicLevel, this.musicLevel);
+    if (this.music) this.music.volume = this.musicVolume();
+  }
+
+  setSfxLevel(level: number): void {
+    this.sfxLevel = clamp01(level);
+    writeLevel(STORAGE.sfxLevel, this.sfxLevel);
+    for (const [name, pool] of this.pools) {
+      const volume = this.sfxVolume(SFX[name]!.volume);
+      for (const audio of pool) audio.volume = volume;
+    }
+    for (const name of COUNTDOWN_SFX) {
+      const audio = this.countdown.get(name);
+      if (audio) audio.volume = this.sfxVolume(SFX[name]!.volume);
+    }
+  }
+
   setMusic(enabled: boolean): void {
     this.musicEnabled = enabled;
     writeFlag(STORAGE.music, enabled);
@@ -197,6 +232,29 @@ function readFlag(key: string, fallback: boolean): boolean {
 function writeFlag(key: string, value: boolean): void {
   try {
     localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    // Private mode: keep the in-memory setting.
+  }
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(1, value));
+}
+
+function readLevel(key: string): number {
+  try {
+    const value = localStorage.getItem(key);
+    if (value === null) return 1;
+    return clamp01(Number(value));
+  } catch {
+    return 1;
+  }
+}
+
+function writeLevel(key: string, value: number): void {
+  try {
+    localStorage.setItem(key, String(value));
   } catch {
     // Private mode: keep the in-memory setting.
   }

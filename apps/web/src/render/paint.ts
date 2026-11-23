@@ -7,7 +7,13 @@
  */
 
 import { Container, Graphics, RenderTexture, Sprite, Texture, type Renderer } from "pixi.js";
-import { PAINT_PALETTE, decodeMaskRle } from "@flash/core";
+import {
+  D_WIDTH,
+  PAINT_PALETTE,
+  PLAYFIELD_HEIGHT,
+  PLAYFIELD_TOP,
+  decodeMaskRle,
+} from "@flash/core";
 
 export const PAINT_TEXTURE_WIDTH = 960;
 export const PAINT_TEXTURE_HEIGHT = 540;
@@ -41,7 +47,9 @@ export class PaintLayer {
     this.sprite.scale.set(PAINT_SCALE);
     this.container.addChild(this.sprite);
 
-    const mask = new Graphics().rect(0, 74, 1920, 1006).fill(0xffffff);
+    const mask = new Graphics()
+      .rect(0, PLAYFIELD_TOP, D_WIDTH, PLAYFIELD_HEIGHT)
+      .fill(0xffffff);
     this.container.addChild(mask);
     this.sprite.mask = mask;
 
@@ -89,11 +97,11 @@ export class PaintLayer {
     const targetCtx = target.getContext("2d");
     if (!targetCtx) return;
     targetCtx.imageSmoothingEnabled = false;
-    // Cell (x,y) covers 4x4 world px starting at playfield y=74.
+    // Cell (x,y) covers 4x4 world px starting at the top of the playfield.
     targetCtx.drawImage(
       maskCanvas,
       0,
-      74 / PAINT_SCALE,
+      PLAYFIELD_TOP / PAINT_SCALE,
       width * PAINT_SCALE,
       height * PAINT_SCALE,
     );
@@ -136,7 +144,7 @@ export class PaintLayer {
   }
 
   stamp(x: number, y: number, radius: number, color: number): void {
-    if (y + radius < 74) return;
+    if (y + radius < PLAYFIELD_TOP) return;
     this.brush.position.set(x / PAINT_SCALE, y / PAINT_SCALE);
     this.brush.tint = color;
     const scale = radius / PAINT_SCALE / 32;

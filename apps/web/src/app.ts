@@ -11,7 +11,7 @@ import {
   roomFromUrl,
 } from "./config";
 import { KeyboardInput } from "./input/keyboard";
-import { OnlineClient, type ConnectionStatus } from "./net/client";
+import { OnlineClient } from "./net/client";
 import { OfflineClient, type OfflineRoundEnd } from "./offline/client";
 import { loadAssets, type GameAssets } from "./render/assets";
 import { SceneRenderer } from "./render/renderer";
@@ -44,8 +44,6 @@ export class FlashApp {
   private onlineState: StateMessage | null = null;
   private latestSnapshot: Snapshot | null = null;
   private result: RoundEndMessage | OfflineRoundEnd | null = null;
-  private latency: number | null = null;
-  private connection: ConnectionStatus = "closed";
   private paused = false;
   private mouseControl = true;
   private inputBlocked = true;
@@ -309,7 +307,6 @@ export class FlashApp {
     this.room = code;
     this.onlineState = null;
     this.result = null;
-    this.connection = "connecting";
     history.replaceState(null, "", inviteUrl(code));
 
     const token = readSessionToken(code) ?? undefined;
@@ -332,14 +329,6 @@ export class FlashApp {
       onError: (errorCode, message) => {
         this.showOnlineError(errorCode, message);
       },
-      onStatus: (status) => {
-        this.connection = status;
-        this.updateChip();
-      },
-      onLatency: (ms) => {
-        this.latency = ms;
-        this.updateChip();
-      },
     });
     this.online = client;
     client.connect();
@@ -350,7 +339,6 @@ export class FlashApp {
     this.ownSlot = message.slot;
     this.ownPalette = this.palette;
     if (this.room) writeSessionToken(message.token, this.room);
-    this.updateChip();
   }
 
   private onlineOrder(): {
@@ -376,7 +364,6 @@ export class FlashApp {
     const order = this.onlineOrder();
     this.renderer.setPlayers(order.names, order.palettes, this.ownSlot);
     this.renderer.setActiveSlots(order.slots);
-    this.updateChip();
 
     const disconnected = state.slots.find(
       (slot) =>
@@ -673,25 +660,6 @@ export class FlashApp {
   private showGameChrome(): void {
     this.setScreen("game");
     clear(this.ui);
-    if (this.mode === "online") {
-      const chip = el("div", "hud-chip");
-      chip.id = "game-chip";
-      chip.append(el("span", "pill", this.room ? `room ${this.room}` : "online"));
-      const latency = el("span", "pill", "—");
-      latency.id = "latency-pill";
-      chip.append(latency);
-      this.ui.append(chip);
-    }
-    this.updateChip();
-  }
-
-  private updateChip(): void {
-    const pill = document.getElementById("latency-pill");
-    if (!pill) return;
-    if (this.connection === "reconnecting") pill.textContent = "reconnecting…";
-    else if (this.connection === "connecting") pill.textContent = "connecting…";
-    else if (this.connection === "closed") pill.textContent = "offline";
-    else pill.textContent = this.latency === null ? "—" : `${Math.round(this.latency)} ms`;
   }
 
   private confirmLeave(): void {
@@ -962,7 +930,6 @@ export class FlashApp {
     this.result = null;
     this.latestSnapshot = null;
     this.ownSlot = null;
-    this.connection = "closed";
     this.room = null;
     history.replaceState(null, "", location.pathname);
     this.inputBlocked = true;

@@ -147,6 +147,7 @@ export class SceneRenderer {
       musicOff: assets.musicOff,
       soundOn: assets.soundOn,
       soundOff: assets.soundOff,
+      prizeIcons: assets.prizeIcons,
       onMusic: () => {
         audio.toggleMusic();
         if (audio.musicEnabled && this.snapshot?.phase === "playing") audio.startMusic();
@@ -154,6 +155,12 @@ export class SceneRenderer {
       },
       onSound: () => {
         audio.toggleSfx();
+      },
+      onMusicVolume: (level) => {
+        audio.setMusicLevel(level);
+      },
+      onSoundVolume: (level) => {
+        audio.setSfxLevel(level);
       },
     });
 
@@ -645,6 +652,9 @@ export class SceneRenderer {
         totalTicks: this.totalTicks,
         musicOn: this.audio.musicEnabled,
         sfxOn: this.audio.sfxEnabled,
+        musicLevel: this.audio.musicLevel,
+        sfxLevel: this.audio.sfxLevel,
+        prizeKind: snapshot.prize?.kind ?? null,
         phase: snapshot.phase,
       },
       dt,

@@ -81,5 +81,7 @@ export const STORAGE = {
   palette: "flash.palette",
   music: "flash.audio.music",
   sfx: "flash.audio.sfx",
+  musicLevel: "flash.audio.music.level",
+  sfxLevel: "flash.audio.sfx.level",
   token: (room: string) => `flash.token.${room}`,
 };
