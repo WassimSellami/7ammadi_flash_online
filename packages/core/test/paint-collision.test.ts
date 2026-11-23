@@ -31,7 +31,7 @@ describe("paint suppression quirk", () => {
     expect(paintedCount(sim.mask, 0)).toBeGreaterThan(0);
   });
 
-  it("stamps both players while player B jumps", () => {
+  it("stops player B stamping while it jumps", () => {
     const sim = toPlaying();
     sim.players[0].mode = WAIT_MODE;
     sim.players[1].mode = WAIT_MODE;
@@ -40,7 +40,7 @@ describe("paint suppression quirk", () => {
     const beforeB = paintedCount(sim.mask, 0);
     sim.players[1].jumping = true;
     stepSim(sim, noInput);
-    expect(paintedCount(sim.mask, 0)).toBeGreaterThan(beforeB);
+    expect(paintedCount(sim.mask, 0)).toBe(beforeB);
   });
 
   it("suppresses painting for both players while player A jumps", () => {

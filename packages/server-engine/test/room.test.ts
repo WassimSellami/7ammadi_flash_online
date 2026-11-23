@@ -86,7 +86,7 @@ describe("RoomEngine lobby", () => {
     });
   });
 
-  it("starts a four-player match on the four midpoints", () => {
+  it("starts a four-player match on the four corners", () => {
     const engine = new RoomEngine({
       code: "FOUR",
       matchConfig: { roundTicks: 60, countdownTicksPerLabel: 1 },
@@ -103,10 +103,12 @@ describe("RoomEngine lobby", () => {
     const sim = engine.simState;
     expect(sim).not.toBeNull();
     expect(sim!.activeSlots).toEqual([0, 1, 2, 3]);
-    expect(sim!.players[0]!.x).toBe(960);
-    expect(sim!.players[0]!.y).toBeLessThan(sim!.players[1]!.y);
-    expect(sim!.players[2]!.x).toBeGreaterThan(sim!.players[3]!.x);
-    expect(sim!.players[2]!.y).toBe(sim!.players[3]!.y);
+    expect(sim!.players[0]!.x).toBeLessThan(960);
+    expect(sim!.players[1]!.x).toBeGreaterThan(960);
+    expect(sim!.players[0]!.y).toBe(sim!.players[1]!.y);
+    expect(sim!.players[0]!.y).toBeLessThan(sim!.players[2]!.y);
+    expect(sim!.players[2]!.x).toBe(sim!.players[1]!.x);
+    expect(sim!.players[3]!.x).toBe(sim!.players[0]!.x);
   });
 
   it("reconnects with the stored token into the same slot", () => {

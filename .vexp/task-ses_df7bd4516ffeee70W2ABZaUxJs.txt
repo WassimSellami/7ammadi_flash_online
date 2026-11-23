@@ -1,0 +1,3 @@
+fix the design of hte scoreboard i want it to look something similar to the classic one with well organized and wel placed elements
+change code briefly, and dont run tests or test or simulate anything.
+title use single battle results, dont use the purple color  for title and percentages

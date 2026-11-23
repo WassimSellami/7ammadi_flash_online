@@ -1,0 +1,3 @@
+do only code changes, nothing else no test run no simulation nothing.
+make the bomb edges sharp and make it 0.9 smaller
+when score shows all the  prizes all the briushes palyers disappear from canvas only their paintnig lasts

@@ -36,7 +36,7 @@ export const BOT_SWEEP_PERIOD_TICKS = 60;
 /** Below this heading error the bot stops correcting, so it runs straight. */
 export const BOT_TURN_DEADBAND = 2.5;
 /** How far from a border the bot starts turning back in. */
-export const BOT_WALL_MARGIN = 120;
+export const BOT_WALL_MARGIN = 0;
 
 const LEFT: InputState = { left: true, right: false };
 const RIGHT: InputState = { left: false, right: true };
@@ -155,6 +155,18 @@ function sweepOffset(sim: SimState, slot: SlotIndex): number {
 
 function roamAngle(sim: SimState, slot: SlotIndex, baseAngle: number): number {
   return baseAngle + sweepOffset(sim, slot);
+}
+
+/**
+ * Deterministic per-match roaming heading that does not depend on the spawn
+ * direction, so bots do not keep patrolling along the axis they started on.
+ */
+export function randomBotHeading(seed: number, slot: SlotIndex): number {
+  let h = (seed ^ Math.imul(slot + 1, 0x9e3779b9)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h % 360;
 }
 
 /**

@@ -68,6 +68,6 @@ describe("constants", () => {
       spawn: "cross",
       countdownTicksPerLabel: 1,
     });
-    expect(four.players.map((player) => player.angle)).toEqual([270, 90, 0, 180]);
+    expect(four.players.map((player) => player.angle)).toEqual([225, 315, 45, 135]);
   });
 });

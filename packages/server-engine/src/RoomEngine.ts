@@ -19,6 +19,7 @@ import {
   createSim,
   encodeMaskRle,
   botInput,
+  randomBotHeading,
   reflectBotHeading,
   finishRound,
   serializeSnapshot,
@@ -682,9 +683,11 @@ export class RoomEngine {
     });
     for (const slot of active) {
       if (slot.bot) {
-        // Keep the cross spawn's outward heading: bots point outside at the
-        // start and let the border reflection turn the patrol around.
-        this.botBaseAngles[slot.slot] = this.sim.players[slot.slot]!.angle;
+        // Roam on a random heading independent from the spawn direction.
+        this.botBaseAngles[slot.slot] = randomBotHeading(
+          this.sim.seed,
+          slot.slot,
+        );
       }
     }
     this.phase = "countdown";

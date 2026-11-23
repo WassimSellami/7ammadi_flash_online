@@ -728,6 +728,7 @@ export class FlashApp {
     const rows = el("div", "result-rows");
     const values: HTMLElement[] = [];
     const trophies: HTMLImageElement[] = [];
+    content.append(el("h2", "result-title", "SINGLE BATTLE RESULTS"));
     for (const player of players) {
       const row = el("div", "result-row");
       const brush = el("img", "result-brush");

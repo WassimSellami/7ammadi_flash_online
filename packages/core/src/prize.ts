@@ -208,14 +208,14 @@ export function rewardPrize(
       startRain(sim, winner.paintIndex, events);
       break;
     case "boom":
-      stampCircle(sim.mask, winner.x, winner.y, 200, winner.paintIndex);
+      stampCircle(sim.mask, winner.x, winner.y, 300, winner.paintIndex);
       events.push({
         tick: sim.tick,
         type: "boom",
         x: winner.x,
         y: winner.y,
         color: winner.paintIndex,
-        radius: 200,
+        radius: 300,
       });
       break;
     case "bandi":
