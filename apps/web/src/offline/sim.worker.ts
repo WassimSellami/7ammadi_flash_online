@@ -9,6 +9,7 @@
  */
 
 import {
+  COUNTDOWN_TICKS_PER_LABEL,
   NEUTRAL_INPUT,
   serializeSnapshot,
   stepSim,
@@ -114,6 +115,7 @@ function beginMatch(): void {
   sim = createSim({
     palettes: initMessage.palettes,
     activeSlots: initMessage.activeSlots,
+    readyTicks: COUNTDOWN_TICKS_PER_LABEL,
     seed: `${initMessage.seed}|m${matchCounter}`,
   });
   inputs = [NEUTRAL_INPUT, NEUTRAL_INPUT];

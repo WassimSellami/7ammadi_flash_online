@@ -6,4 +6,5 @@ export * from "./player";
 export * from "./collision";
 export * from "./prize";
 export * from "./sim";
+export * from "./bot";
 export * from "./hash";

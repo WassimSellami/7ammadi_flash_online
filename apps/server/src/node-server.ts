@@ -43,6 +43,8 @@ export interface NodeServerOptions {
   inputTtlTicks?: number;
   graceTicks?: number;
   idleTtlMs?: number;
+  /** Fill open room slots with AI brushes (the game client enables this). */
+  bots?: boolean;
 }
 
 export interface NodeServerHandle {
@@ -114,6 +116,7 @@ export class RoomHub {
       ...(this.options.graceTicks !== undefined
         ? { graceTicks: this.options.graceTicks }
         : {}),
+      ...(this.options.bots ? { bots: true } : {}),
     });
     const room: RoomRuntime = {
       code: resolved,
@@ -455,6 +458,12 @@ function handleMessage(hub: RoomHub, socket: ClientSocket, data: RawData): void 
       if (!result.ok) hub.sendError(socket, result.code);
       hub.broadcastState(ctx.room);
       hub.ensureLoop(ctx.room);
+      break;
+    }
+    case "bot": {
+      const result = engine.setBot(ctx.playerId, message.slot, message.enabled);
+      if (!result.ok) hub.sendError(socket, result.code);
+      hub.broadcastState(ctx.room);
       break;
     }
     case "input":

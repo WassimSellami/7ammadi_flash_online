@@ -212,7 +212,7 @@ describe("collisions", () => {
     expect(paintedCount(sim.mask, p3!.palette)).toBeGreaterThan(before);
   });
 
-  it("restores every follow_me colour after any collision", () => {
+  it("restores follow_me colours only for the brushes that collide", () => {
     const sim = createSim({
       palettes: [2, 0, 1, 3],
       activeSlots: 4,
@@ -235,6 +235,8 @@ describe("collisions", () => {
 
     expect(a!.paintIndex).toBe(a!.palette);
     expect(b!.paintIndex).toBe(b!.palette);
-    expect(bystander!.paintIndex).toBe(bystander!.palette);
+    // A victim that stayed clear keeps the winner's colour.
+    expect(bystander!.paintIndex).toBe(winner!.palette);
+    expect(winner!.paintIndex).toBe(winner!.palette);
   });
 });

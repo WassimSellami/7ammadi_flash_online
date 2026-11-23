@@ -98,6 +98,7 @@ export function createSim(config: SimConfig): SimState {
   const roundTicks = config.roundTicks ?? ROUND_TICKS;
   const countdownTicksPerLabel =
     config.countdownTicksPerLabel ?? COUNTDOWN_TICKS_PER_LABEL;
+  const readyTicks = Math.max(0, Math.floor(config.readyTicks ?? 0));
   const seedText =
     config.seed ?? `sim|${palettes.join(",")}|${roundTicks}`;
   const activeSlots = normalizeActiveSlots(config.activeSlots);
@@ -128,7 +129,8 @@ export function createSim(config: SimConfig): SimState {
     activeSlots,
     tick: 0,
     countdownTicks: 0,
-    countdownLabel: 0,
+    countdownReadyTicks: readyTicks,
+    countdownLabel: readyTicks > 0 ? -1 : 0,
     countdownAnnounced: -1,
     countdownTicksPerLabel,
     roundTick: 0,
@@ -201,9 +203,11 @@ export function stepSim(
 
 function stepCountdown(sim: SimState, inputs: readonly InputState[]): void {
   const elapsed = TICK_MS;
+  // Steering is locked until the round starts; the warm-up and countdown only
+  // stamp paint, so a held arrow cannot rotate a brush early.
   for (const player of activePlayers(sim)) {
     if (!player.jumpingToWall) {
-      changeAngle(player, inputs[player.slot] ?? NEUTRAL_INPUT, elapsed);
+      changeAngle(player, NEUTRAL_INPUT, elapsed);
     }
   }
 
@@ -211,25 +215,31 @@ function stepCountdown(sim: SimState, inputs: readonly InputState[]): void {
   stampPaint(sim);
 
   const total = sim.countdownTicksPerLabel * COUNTDOWN_LABELS.length;
-  sim.countdownTicks += 1;
-  if (sim.countdownTicks < total && sim.countdownTicks % sim.countdownTicksPerLabel === 0) {
-    sim.countdownLabel = Math.min(
-      COUNTDOWN_LABELS.length - 1,
-      sim.countdownLabel + 1,
-    );
+  if (sim.countdownReadyTicks > 0) {
+    // Warm-up window: every client shows "Ready!" for the same ticks before
+    // the numeric labels, so all screens start the 3-2-1-Go in step.
+    sim.countdownReadyTicks -= 1;
+    if (sim.countdownReadyTicks === 0) sim.countdownLabel = 0;
+  } else {
+    sim.countdownTicks += 1;
+    if (sim.countdownTicks < total && sim.countdownTicks % sim.countdownTicksPerLabel === 0) {
+      sim.countdownLabel = Math.min(
+        COUNTDOWN_LABELS.length - 1,
+        sim.countdownLabel + 1,
+      );
+    }
+    if (sim.countdownTicks >= total) {
+      sim.phase = "playing";
+      sim.roundTick = 0;
+    }
   }
-  if (sim.countdownLabel !== sim.countdownAnnounced) {
+  if (sim.countdownLabel >= 0 && sim.countdownLabel !== sim.countdownAnnounced) {
     sim.countdownAnnounced = sim.countdownLabel;
     sim.events.push({
       tick: sim.tick,
       type: "count",
       label: COUNTDOWN_LABELS[sim.countdownLabel]!,
     });
-  }
-
-  if (sim.countdownTicks >= total) {
-    sim.phase = "playing";
-    sim.roundTick = 0;
   }
 }
 

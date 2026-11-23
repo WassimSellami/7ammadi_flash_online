@@ -60,6 +60,7 @@ export class FlashApp {
     dot: HTMLElement;
     name: HTMLElement;
     state: HTMLElement;
+    control: HTMLButtonElement;
   }> = [];
   private lobbySwatches: HTMLElement | null = null;
   private lobbyChosen = 2;
@@ -522,6 +523,7 @@ export class FlashApp {
   private syncLobby(state: StateMessage): void {
     const self = state.slots.find((slot) => slot.slot === state.you) ?? null;
     if (self) this.lobbyChosen = self.palette;
+    const isHost = state.host !== null && state.you === state.host;
 
     for (let index = 0; index < this.lobbyRows.length; index += 1) {
       const row = this.lobbyRows[index]!;
@@ -531,24 +533,36 @@ export class FlashApp {
         row.dot.style.border = "2px dashed rgba(74, 39, 11, 0.45)";
         row.dot.style.boxShadow = "none";
         row.name.textContent = "Open slot";
-        row.state.textContent = "empty";
-        continue;
+        row.state.textContent = "none";
+      } else {
+        row.dot.style.background = paletteCss(wire.palette);
+        row.dot.style.border = "none";
+        row.dot.style.boxShadow = "";
+        row.name.textContent = wire.name;
+        row.state.textContent = wire.bot
+          ? "bot"
+          : !wire.connected
+            ? "reconnecting"
+            : wire.ready
+              ? "ready"
+              : wire.slot === state.you
+                ? "you"
+                : "not ready";
       }
-      row.dot.style.background = paletteCss(wire.palette);
-      row.dot.style.border = "none";
-      row.dot.style.boxShadow = "";
-      row.name.textContent = wire.name;
-      row.state.textContent = !wire.connected
-        ? "reconnecting"
-        : wire.ready
-          ? "ready"
-          : wire.slot === state.you
-            ? "you"
-            : "not ready";
+
+      // Hosts can toggle the AI for every slot but their own.
+      const canToggle = isHost && index !== state.you && (!wire || wire.bot);
+      row.control.hidden = !canToggle;
+      if (canToggle) {
+        row.control.textContent = wire ? "None" : "Bot";
+        row.control.title = wire ? "Leave this slot empty" : "Add a bot here";
+        row.control.onclick = () =>
+          this.online?.setBot(index as SlotIndex, !wire);
+      }
     }
 
     const taken = state.slots
-      .filter((slot) => slot.slot !== state.you)
+      .filter((slot) => slot.slot !== state.you && !slot.bot)
       .map((slot) => slot.palette);
     if (this.lobbySwatches) {
       syncSwatchRow(this.lobbySwatches, taken, this.lobbyChosen);
@@ -557,7 +571,6 @@ export class FlashApp {
     const connected = state.slots.filter((slot) => slot.connected);
     const allReady =
       connected.length >= 2 && connected.every((slot) => slot.ready);
-    const isHost = state.host !== null && state.you === state.host;
 
     if (this.lobbyReady) {
       const label = this.lobbyReady.firstElementChild;
@@ -570,11 +583,16 @@ export class FlashApp {
     }
     this.lobbyWait?.toggleAttribute("hidden", isHost);
     if (this.lobbyHint) {
-      this.lobbyHint.textContent = allReady
-        ? isHost
-          ? "Everyone is ready — start when you are."
-          : "Everyone is ready — waiting for the host."
-        : "Everyone in the room must be ready before the host can start.";
+      this.lobbyHint.textContent =
+        connected.length < 2
+          ? isHost
+            ? "Add a bot or wait for another player before starting."
+            : "Waiting for another player…"
+          : allReady
+            ? isHost
+              ? "Everyone is ready — start when you are."
+              : "Everyone is ready — waiting for the host."
+            : "Everyone in the room must be ready before the host can start.";
     }
   }
 
@@ -583,13 +601,17 @@ export class FlashApp {
     dot: HTMLElement;
     name: HTMLElement;
     state: HTMLElement;
+    control: HTMLButtonElement;
   } {
     const root = el("div", "slot");
     const dot = el("span", "dot");
     const name = el("span", "name");
     const state = el("span", "state");
-    root.append(dot, name, state);
-    return { root, dot, name, state };
+    const control = el("button", "ghost");
+    control.type = "button";
+    control.hidden = true;
+    root.append(dot, name, state, control);
+    return { root, dot, name, state, control };
   }
 
   private showGameChrome(): void {
@@ -704,12 +726,13 @@ export class FlashApp {
     const trophies: HTMLImageElement[] = [];
     for (const player of players) {
       const row = el("div", "result-row");
+      if (winner === player.slot) row.classList.add("winner");
       const brush = el("img", "result-brush");
       brush.src = this.brushIcon(player.palette);
       brush.alt = "";
       brush.draggable = false;
       const line = el("div", "result-line");
-      const label = el("span", "result-name", `${player.name} :`);
+      const label = el("span", "result-name", player.name);
       label.style.color = paletteCss(player.palette);
       const percent = el("span", "result-percent", "0%");
       values.push(percent);
@@ -1004,7 +1027,7 @@ export class FlashApp {
       const right = keyboard.right || mouse.right;
       this.renderer.setLocalInput(left, right);
       const phase = this.latestSnapshot?.phase ?? this.onlineState?.phase;
-      const active = phase === "playing" || phase === "countdown";
+      const active = phase === "playing";
       if (active) this.online.updateInput(left, right);
       else this.online.sendNeutral();
       return;

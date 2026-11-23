@@ -184,6 +184,11 @@ export class OnlineClient {
     this.send({ t: "start" });
   }
 
+  /** Host-only: turn the AI for a slot on or off. */
+  setBot(slot: SlotIndex, enabled: boolean): void {
+    this.send({ t: "bot", slot, enabled });
+  }
+
   rematch(): void {
     this.send({ t: "rematch" });
   }

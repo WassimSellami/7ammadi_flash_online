@@ -28,9 +28,12 @@ function activePlayers(sim: SimState): PlayerState[] {
   return sim.activeSlots.map((slot) => sim.players[slot]!);
 }
 
-/** `follow_me` ends for everyone as soon as any collision happens. */
-function restoreTrueColors(sim: SimState): void {
-  for (const player of activePlayers(sim)) player.paintIndex = player.palette;
+/**
+ * `follow_me` only ends for the brushes that actually collide. Victims that
+ * stayed clear keep the winner's colour until their own collision.
+ */
+function restoreTrueColors(...players: PlayerState[]): void {
+  for (const player of players) player.paintIndex = player.palette;
 }
 
 function armPlayerCollision(player: PlayerState): void {
@@ -86,7 +89,7 @@ export function bandiReward(
     x: (attacker.x + victim.x) / 2,
     y: (attacker.y + victim.y) / 2,
   });
-  restoreTrueColors(sim);
+  restoreTrueColors(attacker, victim);
   startKnockback(victim);
 }
 
@@ -105,7 +108,7 @@ export function startNormalCollision(
   armPlayerCollision(p2);
   setToNormal(p1);
   setToNormal(p2);
-  restoreTrueColors(sim);
+  restoreTrueColors(p1, p2);
   jump(p1, sim.rng);
   jump(p2, sim.rng);
   beginSquash(p1, 1);

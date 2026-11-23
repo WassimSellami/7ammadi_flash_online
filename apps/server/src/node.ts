@@ -1,3 +1,4 @@
+import { COUNTDOWN_TICKS_PER_LABEL } from "@flash/core";
 import { startNodeServer } from "./node-server";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -10,9 +11,11 @@ const graceTicks = process.env.GRACE_TICKS ? Number(process.env.GRACE_TICKS) : u
 
 const handle = await startNodeServer({
   port,
+  bots: true,
   ...(Number.isFinite(tickMs) && tickMs ? { tickMs } : {}),
   ...(graceTicks ? { graceTicks } : {}),
   matchConfig: {
+    readyTicks: countdownTicksPerLabel ?? COUNTDOWN_TICKS_PER_LABEL,
     ...(roundTicks ? { roundTicks } : {}),
     ...(countdownTicksPerLabel ? { countdownTicksPerLabel } : {}),
   },

@@ -7,7 +7,7 @@
  * per-tick writes.
  */
 
-import { finishRound } from "@flash/core";
+import { COUNTDOWN_TICKS_PER_LABEL, finishRound } from "@flash/core";
 import { RoomEngine, type RoomRecord } from "@flash/server-engine";import {
   PROTOCOL_VERSION,
   encodeServerMessage,
@@ -155,9 +155,10 @@ export class Room implements DurableObject {
   private async ensureEngine(code: string): Promise<RoomEngine> {
     if (this.engine) return this.engine;
     this.code = code || this.code;
+    const matchConfig = { readyTicks: COUNTDOWN_TICKS_PER_LABEL };
     this.engine = this.record
-      ? RoomEngine.restore(this.record)
-      : new RoomEngine({ code: this.code });
+      ? RoomEngine.restore(this.record, { matchConfig, bots: true })
+      : new RoomEngine({ code: this.code, matchConfig, bots: true });
     this.lastPhase = this.engine.phase;
     return this.engine;
   }
@@ -277,6 +278,13 @@ export class Room implements DurableObject {
         await this.persist();
         this.broadcastState();
         this.ensureLoop();
+        break;
+      }
+      case "bot": {
+        const result = engine.setBot(attachment.playerId, msg.slot, msg.enabled);
+        if (!result.ok) this.sendError(ws, result.code);
+        await this.persist();
+        this.broadcastState();
         break;
       }
       case "input":

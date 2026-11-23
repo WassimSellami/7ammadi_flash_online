@@ -18,6 +18,8 @@ import {
   TICK_MS,
   createSim,
   encodeMaskRle,
+  botInput,
+  reflectBotHeading,
   finishRound,
   serializeSnapshot,
   stepSim,
@@ -49,6 +51,8 @@ export interface RoomSlot {
   palette: number;
   ready: boolean;
   connected: boolean;
+  /** True for an AI-filled slot; a joining human replaces it in place. */
+  bot: boolean;
   disconnectTick: number | null;
   lastInputTick: number;
   lastInputSeq: number;
@@ -90,6 +94,8 @@ export interface RoomOptions {
   inputTtlTicks?: number;
   graceTicks?: number;
   seedPrefix?: string;
+  /** Fill every open slot with a ready bot (production rooms enable this). */
+  bots?: boolean;
 }
 
 export type TickReason =
@@ -156,12 +162,18 @@ export class RoomEngine {
   private forceSnapshot = false;
   private pendingReason: TickReason = "none";
   private readonly rematchVotes = new Set<number>();
+  private readonly botsEnabled: boolean;
+  private readonly botBaseAngles: number[] = SLOT_INDICES.map(() => 0);
+  /** Slots the host explicitly left empty in the lobby. */
+  private readonly disabledBots = new Set<SlotIndex>();
 
   constructor(options: RoomOptions) {
     this.code = options.code;
     this.options = options;
     this.ttlTicks = options.inputTtlTicks ?? DEFAULT_INPUT_TTL_TICKS;
     this.graceTicks = options.graceTicks ?? DEFAULT_GRACE_TICKS;
+    this.botsEnabled = options.bots ?? false;
+    if (this.botsEnabled) this.fillBots();
   }
 
   get simState(): SimState | null {
@@ -176,10 +188,10 @@ export class RoomEngine {
     return this.slots.filter((slot) => slot?.connected).length;
   }
 
-  /** Lowest connected slot; the host starts the match. */
+  /** Lowest connected human slot; bots never become host. */
   get hostSlot(): SlotIndex | null {
     for (const slot of this.slots) {
-      if (slot?.connected) return slot.slot;
+      if (slot?.connected && !slot.bot) return slot.slot;
     }
     return null;
   }
@@ -214,7 +226,7 @@ export class RoomEngine {
 
     if (token) {
       const existing = this.findByToken(token);
-      if (existing) {
+      if (existing && !existing.bot) {
         existing.connected = true;
         existing.disconnectTick = null;
         existing.messagesThisTick = 0;
@@ -235,10 +247,14 @@ export class RoomEngine {
       }
     }
 
-    const slot = SLOT_INDICES.find((index) => this.slots[index] === null);
+    // Humans fill open slots first, then take over the lowest bot until
+    // everyone who joins has a brush.
+    const empty = SLOT_INDICES.find((index) => this.slots[index] === null);
+    const bot = SLOT_INDICES.find((index) => this.slots[index]?.bot);
+    const slot = empty ?? bot;
     if (slot === undefined) return { ok: false, code: "room_full" };
 
-    const palette = this.defaultPalette(slot);
+    const palette = this.slots[slot]?.palette ?? this.defaultPalette(slot);
     const player: RoomSlot = {
       slot,
       playerId: `${this.code}-${slot}`,
@@ -247,6 +263,7 @@ export class RoomEngine {
       palette,
       ready: false,
       connected: true,
+      bot: false,
       disconnectTick: null,
       lastInputTick: 0,
       lastInputSeq: -1,
@@ -254,6 +271,7 @@ export class RoomEngine {
       messagesThisTick: 0,
     };
     this.slots[slot] = player;
+    this.disabledBots.delete(slot);
     this.stateChanged = true;
     this.forceSnapshot = true;
     this.pendingReason = "reconnect";
@@ -286,6 +304,65 @@ export class RoomEngine {
     );
   }
 
+  /** Keeps every open slot playable while the room waits for humans. */
+  private fillBots(): void {
+    if (!this.botsEnabled) return;
+    for (const slot of SLOT_INDICES) {
+      if (this.slots[slot] || this.disabledBots.has(slot)) continue;
+      this.slots[slot] = this.createBot(slot);
+      this.stateChanged = true;
+    }
+  }
+
+  private createBot(slot: SlotIndex): RoomSlot {
+    return {
+      slot,
+      playerId: `${this.code}-bot-${slot}`,
+      token: `bot-${this.code}-${slot}`,
+      name: `Bot ${slot + 1}`,
+      palette: this.defaultPalette(slot),
+      ready: true,
+      connected: true,
+      bot: true,
+      disconnectTick: null,
+      lastInputTick: 0,
+      lastInputSeq: -1,
+      input: { ...NEUTRAL_INPUT },
+      messagesThisTick: 0,
+    };
+  }
+
+  /**
+   * Host-only lobby control: toggle the AI in a slot. `enabled: false` leaves
+   * the slot empty for the round; `true` puts a ready bot back. Human slots are
+   * never touched.
+   */
+  setBot(
+    playerId: string,
+    target: SlotIndex,
+    enabled: boolean,
+  ): { ok: true } | { ok: false; code: "not_joined" | "not_host" | "not_ready" } {
+    const caller = this.findByPlayerId(playerId);
+    if (!caller) return { ok: false, code: "not_joined" };
+    if (this.phase !== "lobby") return { ok: false, code: "not_ready" };
+    if (this.hostSlot !== caller.slot) return { ok: false, code: "not_host" };
+    const existing = this.slots[target] ?? null;
+    if (existing && !existing.bot) return { ok: false, code: "not_ready" };
+
+    this.touch();
+    if (enabled) {
+      this.disabledBots.delete(target);
+      if (!existing) this.slots[target] = this.createBot(target);
+    } else {
+      this.disabledBots.add(target);
+      if (existing?.bot) this.slots[target] = null;
+    }
+    this.reassignBotPalettes();
+    this.stateChanged = true;
+    this.pendingReason = "ready";
+    return { ok: true };
+  }
+
   findByToken(token: string): RoomSlot | null {
     return this.slots.find((slot) => slot?.token === token) ?? null;
   }
@@ -295,7 +372,11 @@ export class RoomEngine {
     if (!slot) return { ok: false, code: "not_joined" };
     if (this.phase !== "lobby") return { ok: true };
     const taken = this.slots.some(
-      (other) => other !== null && other.slot !== slot.slot && other.palette === palette,
+      (other) =>
+        other !== null &&
+        !other.bot &&
+        other.slot !== slot.slot &&
+        other.palette === palette,
     );
     if (taken) {
       return { ok: false, code: "palette_taken" };
@@ -303,6 +384,7 @@ export class RoomEngine {
     this.touch();
     slot.palette = palette;
     slot.ready = true;
+    this.reassignBotPalettes();
     this.stateChanged = true;
     this.pendingReason = "ready";
     return { ok: true };
@@ -314,15 +396,45 @@ export class RoomEngine {
     if (!slot) return { ok: false, code: "not_joined" };
     if (this.phase !== "lobby") return { ok: true };
     const taken = this.slots.some(
-      (other) => other !== null && other.slot !== slot.slot && other.palette === palette,
+      (other) =>
+        other !== null &&
+        !other.bot &&
+        other.slot !== slot.slot &&
+        other.palette === palette,
     );
     if (taken) return { ok: false, code: "palette_taken" };
     if (slot.palette === palette) return { ok: true };
     this.touch();
     slot.palette = palette;
+    this.reassignBotPalettes();
     this.stateChanged = true;
     this.pendingReason = "ready";
     return { ok: true };
+  }
+
+  /** Bots yield any colour a human picks, keeping all four brushes distinct. */
+  private reassignBotPalettes(): void {
+    const used = new Set<number>();
+    for (const slot of this.slots) {
+      if (slot && !slot.bot) used.add(slot.palette);
+    }
+    for (const index of SLOT_INDICES) {
+      const bot = this.slots[index];
+      if (!bot?.bot) continue;
+      let palette = bot.palette;
+      if (used.has(palette)) {
+        palette = -1;
+        for (let candidate = 0; candidate < PALETTE_COUNT; candidate += 1) {
+          if (!used.has(candidate)) {
+            palette = candidate;
+            break;
+          }
+        }
+        bot.palette = palette >= 0 ? palette : bot.palette;
+        palette = bot.palette;
+      }
+      used.add(palette);
+    }
   }
 
   /** Host-only start, allowed with any player count from 2 to 4. */
@@ -368,9 +480,11 @@ export class RoomEngine {
     this.rematchVotes.add(slot.slot);
     this.touch();
 
-    const required = this.connectedSlots().map((candidate) => candidate.slot);
+    const required = this.connectedSlots()
+      .filter((candidate) => !candidate.bot)
+      .map((candidate) => candidate.slot);
     const started =
-      required.length >= 2 &&
+      required.length >= 1 &&
       required.every((vote) => this.rematchVotes.has(vote));
     if (started) {
       this.startMatch();
@@ -390,6 +504,7 @@ export class RoomEngine {
       this.rematchVotes.clear();
       this.sim = null;
       this.phase = "lobby";
+      this.fillBots();
       this.stateChanged = true;
       this.pendingReason = "left";
       return;
@@ -434,9 +549,20 @@ export class RoomEngine {
         reason = "phase";
         forceSnapshot = true;
       } else {
-        const inputs: InputState[] = SLOT_INDICES.map((slot) =>
-          this.effectiveInput(slot),
-        );
+        const inputs: InputState[] = SLOT_INDICES.map((slot) => {
+          const roomSlot = this.slots[slot];
+          if (roomSlot?.bot && this.sim) {
+            const player = this.sim.players[slot]!;
+            if (this.sim.phase === "playing") {
+              this.botBaseAngles[slot] = reflectBotHeading(
+                player,
+                this.botBaseAngles[slot] ?? 0,
+              );
+            }
+            return botInput(this.sim, slot, this.botBaseAngles[slot]!);
+          }
+          return this.effectiveInput(slot);
+        });
         events = stepSim(this.sim, inputs);
         this.phase = this.sim.phase;
         if (this.sim.phase === "result") {
@@ -486,12 +612,13 @@ export class RoomEngine {
   }
 
   private checkForfeit(): { reason: RoundEndReason; winner: number | null } | null {
-    const present = this.slots.filter(
-      (slot): slot is RoomSlot => slot !== null && slot.connected,
+    // Bots are always present; forfeit rules only judge connected humans so a
+    // bot never turns a disconnect into a ghost player or a stalled round.
+    const humans = this.slots.filter(
+      (slot): slot is RoomSlot => slot !== null && !slot.bot,
     );
-    const absent = this.slots.filter(
-      (slot): slot is RoomSlot => slot !== null && !slot.connected,
-    );
+    const present = humans.filter((slot) => slot.connected);
+    const absent = humans.filter((slot) => !slot.connected);
     if (absent.length === 0) return null;
     for (const slot of absent) {
       if (slot.disconnectTick === null) return null;
@@ -523,6 +650,13 @@ export class RoomEngine {
       seed: `${this.options.seedPrefix ?? this.code}|m${this.matchNumber}|${palettes.join(",")}`,
       ...(this.options.matchConfig ?? {}),
     });
+    for (const slot of active) {
+      if (slot.bot) {
+        // Keep the cross spawn's outward heading: bots point outside at the
+        // start and let the border reflection turn the patrol around.
+        this.botBaseAngles[slot.slot] = this.sim.players[slot.slot]!.angle;
+      }
+    }
     this.phase = "countdown";
     this.rematchVotes.clear();
     this.forceSnapshot = true;
@@ -558,6 +692,7 @@ export class RoomEngine {
             palette: slot.palette,
             ready: slot.ready,
             connected: slot.connected,
+            ...(slot.bot ? { bot: true } : {}),
           }
         : null;
     const reason = this.sim?.endReason ?? undefined;
@@ -584,18 +719,19 @@ export class RoomEngine {
     return this.sim?.roundTicks ?? this.options.matchConfig?.roundTicks ?? ROUND_TICKS;
   }
 
-  /** True when the room can be hibernated/evicted. */
+  /** True when the room can be hibernated/evicted; bots do not keep it alive. */
   isIdle(): boolean {
-    return (
-      (this.phase === "lobby" || this.phase === "result") &&
-      this.connectedCount === 0
+    const humansConnected = this.slots.some(
+      (slot) => slot !== null && !slot.bot && slot.connected,
     );
+    return (this.phase === "lobby" || this.phase === "result") && !humansConnected;
   }
 
   /** Snapshot of lobby data for durability across adapter restarts. */
   serializeRecord(): RoomRecord {
+    // Bots are rebuilt on restore; only human identities need persisting.
     const toRecord = (slot: RoomSlot | null): SlotRecord | null =>
-      slot
+      slot && !slot.bot
         ? {
             slot: slot.slot,
             name: slot.name,
@@ -629,6 +765,7 @@ export class RoomEngine {
         palette: saved.palette,
         ready: saved.ready,
         connected: false,
+        bot: false,
         disconnectTick: null,
         lastInputTick: 0,
         lastInputSeq: -1,
@@ -637,6 +774,11 @@ export class RoomEngine {
       };
       engine.slots[saved.slot] = slot;
     }
+    // Re-seed bots after humans so their palettes avoid the restored ones.
+    for (const index of SLOT_INDICES) {
+      if (engine.slots[index]?.bot) engine.slots[index] = null;
+    }
+    engine.fillBots();
     engine.phase = "lobby";
     return engine;
   }

@@ -87,6 +87,11 @@ export interface SimConfig {
   roundTicks?: number;
   /** Ticks per countdown label. Defaults to 60 (1 s). */
   countdownTicksPerLabel?: number;
+  /**
+   * Warm-up ticks at the start of the countdown where every client shows
+   * "Ready!" before the 3-2-1-Go labels. Defaults to 0.
+   */
+  readyTicks?: number;
   /** Active slots: a count (1-4) or explicit slot indices. */
   activeSlots?: number | readonly number[];
   /** Legacy spawns A-left/B-right; cross uses the four playfield midpoints. */
@@ -105,6 +110,9 @@ export interface SimState {
   /** Absolute tick since the match started (countdown included). */
   tick: number;
   countdownTicks: number;
+  /** Ticks left in the "Ready!" warm-up before the numeric labels start. */
+  countdownReadyTicks: number;
+  /** `-1` during the "Ready!" warm-up, then a `COUNTDOWN_LABELS` index. */
   countdownLabel: number;
   countdownAnnounced: number;
   countdownTicksPerLabel: number;
@@ -201,7 +209,7 @@ export interface Snapshot {
   /** Total playing ticks in this round. */
   total?: number;
   paint: boolean;
-  /** Countdown label index while `phase === "countdown"`. */
+  /** Countdown label index while `phase === "countdown"`; `-1` means "Ready!". */
   cd?: number;
   /** Winner slot after the round ended. */
   win?: number | null;

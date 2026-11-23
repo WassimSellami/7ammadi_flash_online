@@ -29,6 +29,8 @@ export interface SlotWire {
   palette: number;
   ready: boolean;
   connected: boolean;
+  /** True when the slot is filled by the room AI. */
+  bot?: boolean;
 }
 
 export interface JoinMessage {
@@ -52,6 +54,13 @@ export interface ColorMessage {
 
 export interface StartMessage {
   t: "start";
+}
+
+/** Host-only lobby control: enable an AI brush or leave the slot empty. */
+export interface BotMessage {
+  t: "bot";
+  slot: SlotIndex;
+  enabled: boolean;
 }
 
 export interface InputMessage {
@@ -80,6 +89,7 @@ export type ClientMessage =
   | ReadyMessage
   | ColorMessage
   | StartMessage
+  | BotMessage
   | InputMessage
   | RematchMessage
   | LeaveMessage
@@ -262,6 +272,15 @@ export function parseClientMessage(raw: string): ParseResult {
     }
     case "start":
       return { ok: true, msg: { t: "start" } };
+    case "bot": {
+      if (!isInt(msg.slot, 0, MAX_SLOTS - 1) || typeof msg.enabled !== "boolean") {
+        return { ok: false, code: "protocol" };
+      }
+      return {
+        ok: true,
+        msg: { t: "bot", slot: msg.slot as SlotIndex, enabled: msg.enabled },
+      };
+    }
     case "input": {
       if (!isInt(msg.seq, 0, 2 ** 31) || !isInt(msg.tick, 0, 2 ** 31)) {
         return { ok: false, code: "protocol" };

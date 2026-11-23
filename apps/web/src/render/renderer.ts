@@ -57,8 +57,6 @@ interface DisplayPlayer {
 
 const PLAYER_NAMES = ["Player_A", "Player_B", "Player_C", "Player_D"];
 const COUNTDOWN_SFX = ["s_3", "s_2", "s_1", "s_go"] as const;
-/** Wait for half a second of real server progress before showing numbers. */
-const COUNTDOWN_GATE_TICKS = 30;
 
 export class SceneRenderer {
   private readonly app: Application;
@@ -99,8 +97,6 @@ export class SceneRenderer {
   private predictedAngle = 180;
   private countdownAge = 0;
   private countdownLabel = -1;
-  private countdownGateTick = -1;
-  private countdownCounting = false;
   private readonly pendingPaint: Array<{
     x: number;
     y: number;
@@ -280,8 +276,6 @@ export class SceneRenderer {
     this.countdown.visible = false;
     this.countdownLabel = -1;
     this.countdownAge = 0;
-    this.countdownGateTick = -1;
-    this.countdownCounting = false;
     for (const display of this.displays) display.bandiStarted = null;
   }
 
@@ -296,7 +290,10 @@ export class SceneRenderer {
     const resumingRound =
       snapshot.phase === "playing" && (this.lastPhase === null || this.lastPhase === "result");
     const first = !this.hasSnapshot;
-    if (first || enteringCountdown || resumingRound) {
+    // A fresh round must not interpolate from the previous death positions:
+    // that smear would be painted as a countdown trail.
+    const resetView = first || enteringCountdown || resumingRound;
+    if (resetView) {
       this.resetRound();
       this.hasSnapshot = true;
     }
@@ -314,7 +311,7 @@ export class SceneRenderer {
       display.targetX = source.x;
       display.targetY = source.y;
       display.targetAngle = source.ang;
-      if (first || distance > 260) {
+      if (resetView || distance > 260) {
         display.x = source.x;
         display.y = source.y;
         display.angle = source.ang;
@@ -334,34 +331,23 @@ export class SceneRenderer {
     }
 
     if (snapshot.phase === "countdown") {
-      if (!this.countdownCounting) {
-        if (this.countdownGateTick < 0) {
-          this.countdownGateTick = snapshot.tick;
-        } else if (snapshot.tick - this.countdownGateTick >= COUNTDOWN_GATE_TICKS) {
-          this.countdownCounting = true;
-          this.showCountdown(snapshot.cd ?? 0);
-        } else {
-          this.showCountdownWait();
-        }
-      } else {
-        this.showCountdown(snapshot.cd ?? 0);
-      }
+      this.showCountdown(snapshot.cd ?? 0);
     } else {
       if (this.countdown.visible) this.audio.stopCountdown();
       this.countdown.visible = false;
-      this.countdownCounting = false;
-      this.countdownGateTick = -1;
     }
   }
 
   private showCountdown(label: number): void {
+    if (label < 0) {
+      this.showCountdownWait();
+      return;
+    }
     if (label !== this.countdownLabel) this.setCountdownLabel(label);
   }
 
-  /** Shows "Ready!" until the server's countdown is visibly progressing. */
+  /** Shows "Ready!" for the server's warm-up ticks before the numbers. */
   beginCountdownWait(): void {
-    this.countdownGateTick = -1;
-    this.countdownCounting = false;
     this.showCountdownWait();
   }
 
@@ -533,11 +519,9 @@ export class SceneRenderer {
       }
     }
 
-    // Own-player angle prediction (position stays authoritative).
-    if (
-      this.ownSlot !== null &&
-      (snapshot.phase === "playing" || snapshot.phase === "countdown")
-    ) {
+    // Own-player angle prediction (position stays authoritative). Locked until
+    // the round starts so the countdown cannot be steered locally either.
+    if (this.ownSlot !== null && snapshot.phase === "playing") {
       const source = snapshot.players.find((player) => player.slot === this.ownSlot);
       if (source) {
         const modeAngle = source.m === 0 ? 0 : 6;
@@ -565,6 +549,7 @@ export class SceneRenderer {
       const view = this.players[slot]!;
       view.update(
         {
+          name: this.names[slot] ?? "",
           x: display.x,
           y: display.y,
           angle,

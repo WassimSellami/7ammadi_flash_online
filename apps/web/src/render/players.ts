@@ -6,9 +6,9 @@
  * `EffectsManager` does in the reference; the brush itself is never clipped.
  */
 
-import { Container, Graphics, Sprite } from "pixi.js";
+import { Container, Graphics, Sprite, Text, TextStyle } from "pixi.js";
 import { D_WIDTH, PAINT_PALETTE, PLAYFIELD_BOTTOM, PLAYFIELD_TOP } from "@flash/core";
-import { FX_SCALE } from "../config";
+import { FONT_FAMILY, FX_SCALE } from "../config";
 import type { BrushLayers } from "./assets";
 
 const ICON_SIZE = 80;
@@ -18,6 +18,7 @@ const BRUSH_VISUAL_SCALE = 1.3;
 const VISUAL_SIZE = ICON_SIZE * BRUSH_VISUAL_SCALE;
 
 export interface PlayerViewState {
+  name: string;
   x: number;
   y: number;
   angle: number;
@@ -52,6 +53,17 @@ export class PlayerView {
   private readonly stars = new Graphics();
   private readonly marker = new Graphics();
   private readonly brush = new Container();
+  private readonly label = new Text({
+    text: "",
+    style: new TextStyle({
+      fontFamily: FONT_FAMILY,
+      fontSize: 24,
+      fontWeight: "700",
+      fill: 0xffffff,
+      stroke: { color: 0x0c0c0e, width: 5 },
+      dropShadow: { color: 0x000000, alpha: 0.4, blur: 5, distance: 2, angle: 90 },
+    }),
+  });
   private readonly upper: Sprite;
   private readonly lower: Sprite;
   private readonly layers: Map<number, BrushLayers>;
@@ -70,7 +82,8 @@ export class PlayerView {
     this.over.addChild(this.stars, this.marker, overMask);
     this.over.mask = overMask;
 
-    this.container.addChild(this.ground, this.brush, this.over);
+    this.container.addChild(this.ground, this.brush, this.over, this.label);
+    this.label.anchor.set(0.5, 1);
 
     const initial = this.layers.get(colorIndex) ?? this.layers.values().next().value!;
     this.upper = new Sprite(initial.upper);
@@ -93,6 +106,8 @@ export class PlayerView {
       sprite.pivot.set(ICON_SIZE / 2, pivotY);
       sprite.position.set(0, -ICON_SIZE / 2 + pivotY);
     }
+    const rgb = PAINT_PALETTE[colorIndex]?.rgb ?? PAINT_PALETTE[0]!.rgb;
+    this.label.style.fill = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
   }
 
   update(state: PlayerViewState, dt: number): void {
@@ -114,6 +129,14 @@ export class PlayerView {
     this.drawRing(state);
     this.drawStars(state);
     this.drawMarker(state, baseY);
+
+    if (state.name) {
+      if (this.label.text !== state.name) this.label.text = state.name;
+      this.label.visible = true;
+      this.label.position.set(state.x, baseY - VISUAL_SIZE * 0.55 - 8);
+    } else {
+      this.label.visible = false;
+    }
   }
 
   /** `EffectsManager._draw_player_shadow`, based on the fixed 80 px sprite. */
